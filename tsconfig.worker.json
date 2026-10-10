@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "ESNext.Disposable"],
+    "types": [],
+    "skipLibCheck": false
+  },
+  "include": ["src", "tests/types/actual-read-entry.ts"],
+  "exclude": ["node_modules", "artifacts", "dist"]
+}

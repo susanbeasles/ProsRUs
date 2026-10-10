@@ -1,0 +1,3 @@
+export const MAX_ORIGINAL_BYTES = 1_073_741_824;
+export const MAX_ARCHIVE_BYTES = 8_388_608;
+export const STREAM_READ_BYTES = 65_536;

@@ -1,0 +1,17 @@
+{
+ "$schema":"node_modules/wrangler/config-schema.json",
+ "name":"job-stack-staging",
+ "main":"src/worker.ts",
+ "compatibility_date":"2026-10-08",
+ "compatibility_flags":["nodejs_compat"],
+ "workers_dev":false,"preview_urls":false,
+ "assets":{"directory":"./dist","binding":"ASSETS","run_worker_first":true,"not_found_handling":"single-page-application"},
+ "observability":{"enabled":true,"head_sampling_rate":0.1},
+ "vars":{"OWNER_ID":"UNCONFIGURED","GATEWAY_ORIGIN":"https://control.vespoli.me","GOOGLE_CLIENT_ID":"","GOOGLE_REDIRECT_URI":"https://control.vespoli.me/owner/job-stack/google/callback","GOOGLE_PUBSUB_TOPIC":""},
+ "d1_databases":[{"binding":"DB","database_name":"job-stack-staging","database_id":"00000000-0000-0000-0000-000000000000","migrations_dir":"migrations"}],
+ "r2_buckets":[{"binding":"ARTIFACTS","bucket_name":"job-stack-staging"}],
+ "durable_objects":{"bindings":[{"name":"COORDINATOR","class_name":"Coordinator"}]},
+ "migrations":[{"tag":"v1","new_sqlite_classes":["Coordinator"]}],
+ "queues":{"producers":[{"binding":"JOBS","queue":"job-stack-staging"}],"consumers":[]},
+ "triggers":{"crons":[]}
+}

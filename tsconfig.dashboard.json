@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": false,
+    "types": ["react", "react-dom"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["dashboard"],
+  "exclude": ["node_modules", "artifacts", "dist"]
+}
