@@ -11,7 +11,7 @@ const bundled = (
   await build({
     stdin: {
       contents:
-        "export {planAuditedImport} from './src/application/audited-legacy-import';export {seedAuditedLegacy} from './src/storage/audited-legacy-seed';export {createRecordReads} from './src/application/record-reads';export {inputs,supplementedInputs,fixtureProfile} from './tests/fixtures/audited-inputs';export {parseAuditedSourceProfile} from './src/application/audited-source-profile';",
+        "export {planAuditedImport} from './src/application/audited-legacy-import';export {seedAuditedLegacy} from './src/storage/audited-legacy-seed';export {createRecordReads} from './src/application/record-reads';export {inputs,supplementedInputs,fixtureProfile} from './tests/fixtures/audited-inputs';export {parseAuditedSourceProfile} from './src/application/audited-source-profile';export {DomainError} from './src/domain/model';",
       resolveDir: process.cwd(),
     },
     bundle: true,
@@ -33,10 +33,34 @@ const {
   inputs,
   supplementedInputs,
   createRecordReads,
+  DomainError,
 } = await import(pathToFileURL(artifact));
 const profileFor = (workspace, seriesId) => parseAuditedSourceProfile({ ...fixtureProfile, workspace, seriesId });
 const planAuditedImport = (input) => actualPlanAuditedImport(input, profileFor(input.workspace, input.seriesId));
 const seedAuditedLegacy = (ports, requested) => actualSeedAuditedLegacy(ports, requested, profileFor(requested.workspace, requested.seriesId));
+const domainFailure = (code) => (error) =>
+  error instanceof DomainError && error.code === code && error.status === 400;
+test("audited error assertions reject wrong type, code, status and resolution", async () => {
+  for (const code of ["AUDIT_SOURCE_HASH", "operation-denied"]) {
+    const expected = domainFailure(code);
+    await assert.rejects(Promise.reject(new DomainError(code)), expected);
+    for (const error of [
+      new DomainError("unrelated-denial"),
+      new DomainError(
+        code === "AUDIT_SOURCE_HASH" ? "operation-denied" : "AUDIT_SOURCE_HASH",
+      ),
+      new DomainError(code, 403),
+      Object.assign(new Error(code), { code, status: 400 }),
+    ])
+      await assert.rejects(assert.rejects(Promise.reject(error), expected), {
+        code: "ERR_ASSERTION",
+      });
+    await assert.rejects(
+      assert.rejects(Promise.resolve({ record: null }), expected),
+      { code: "ERR_ASSERTION" },
+    );
+  }
+});
 test("actual local D1 seed is atomic, lossless, collision-safe and exactly repeatable", async (t) => {
   const mf = new Miniflare(
     convertV4MiniflareOptions({
@@ -255,6 +279,25 @@ test("actual local D1 seed is atomic, lossless, collision-safe and exactly repea
     ...original,
     rawUtf8: original.rawUtf8.replace("Independent fixture company", "CORRUPTED DATA"),
   };
+  assert.notEqual(corrupted.rawUtf8, original.rawUtf8);
+  assert.throws(
+    () =>
+      planAuditedImport({
+        sources: fifthPlan.sources.map((source) => ({
+          name: source.name,
+          bytes: new TextEncoder().encode(
+            source.rawSha256 === original.rawSha256
+              ? corrupted.rawUtf8
+              : source.rawUtf8,
+          ),
+          receipt: source.sourceReceipt,
+        })),
+        workspace: fifthWorkspace,
+        seriesId: "synthetic_fifth",
+        observedAt: fifthPlan.receipt.importObservedAt,
+      }),
+    domainFailure("AUDIT_SOURCE_HASH"),
+  );
   await assert.rejects(
     db
       .prepare(
@@ -268,6 +311,8 @@ test("actual local D1 seed is atomic, lossless, collision-safe and exactly repea
       .run(),
     /RECOVERY_HISTORY_IMMUTABLE/,
   );
+  let corruptSource = false,
+    corruptReads = 0;
   const corruptTransport = {
     prepare(sql) {
       const statement = db.prepare(sql);
@@ -283,12 +328,16 @@ test("actual local D1 seed is atomic, lossless, collision-safe and exactly repea
                 const result = await bound.all();
                 return {
                   ...result,
-                  results: result.results.map((row) =>
-                    JSON.parse(row.source_snapshot).rawSha256 ===
-                    original.rawSha256
-                      ? { ...row, source_snapshot: JSON.stringify(corrupted) }
-                      : row,
-                  ),
+                  results: result.results.map((row) => {
+                    if (
+                      !corruptSource ||
+                      JSON.parse(row.source_snapshot).rawSha256 !==
+                        original.rawSha256
+                    )
+                      return row;
+                    corruptReads++;
+                    return { ...row, source_snapshot: JSON.stringify(corrupted) };
+                  }),
                 };
               },
             };
@@ -297,7 +346,7 @@ test("actual local D1 seed is atomic, lossless, collision-safe and exactly repea
       };
     },
   };
-  await assert.rejects(
+  const readTransported = () =>
     createRecordReads(
       corruptTransport,
       fifthWorkspace.ownerId,
@@ -307,7 +356,13 @@ test("actual local D1 seed is atomic, lossless, collision-safe and exactly repea
       workspaceId: fifthWorkspace.workspaceId,
       kind: "opportunity",
       entityId: target.id,
-    }),
-    /AUDIT_SOURCE_HASH/,
-  );
+    });
+  assert.deepEqual(await readTransported(), detail);
+  assert.equal(corruptReads, 0);
+  corruptSource = true;
+  // Reconstruction hides the inner hash failure behind the public denial contract.
+  await assert.rejects(readTransported(), domainFailure("operation-denied"));
+  assert.equal(corruptReads, 1);
+  corruptSource = false;
+  assert.deepEqual(await readTransported(), detail);
 });
