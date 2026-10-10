@@ -141,7 +141,10 @@ try {
         records: [opSlot],
       },
       read: {
-        records: [opGuard],
+        records: [
+          opGuard,
+          { recordKind: "settings", entityId: "main", state: "absent" },
+        ],
         bindings: [opBinding],
         collections: [],
         sourceKeys: [
