@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.worker.json",
+  "include": [
+    "src/bindings.d.ts",
+    "src/cloudflare-workers.d.ts",
+    "tests/types/operator-kernel-worker.ts"
+  ]
+}

@@ -26,6 +26,9 @@ export class Coordinator extends DurableObject<Environment> {
     const reads = createRecordReads(this.env.DB, ownerId, workspaceId, profile);
     let output: unknown;
     switch (request.operationId) {
+      case "job-stack.pipeline.page.read.v1":
+        output = await reads.pipelinePage(request.input);
+        break;
       case "job-stack.records.read.v1":
         output = await reads.records(request.input);
         break;

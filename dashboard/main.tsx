@@ -1,9 +1,10 @@
-import { StrictMode, useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createReadClient,
   type ReadRecord,
-  type ReadSummary,
+  type PipelineSummary,
+  type PipelinePage,
   type ProtectionState,
 } from "./api";
 import { Opportunities } from "./pages/Opportunities";
@@ -15,10 +16,17 @@ function locationState(search = location.search) {
     record: query.get("record"),
     history: query.get("history") === "1",
     versionId: query.get("version"),
+    view:
+      query.get("view") === "all"
+        ? ("all" as const)
+        : ("relationships" as const),
+    cursor: query.get("cursor"),
   };
 }
 function App() {
   const active = useRef(new Set<AbortController>());
+  const navigationGeneration = useRef(0);
+  const pageTrail = useRef<(string | null)[]>([]);
   const detailController = useRef<AbortController | null>(null);
   function clearDetail() {
     detailController.current?.abort();
@@ -27,25 +35,39 @@ function App() {
     setVersion(null);
     setProtection(null);
   }
-  function fail(message: string) {
+  function invalidateReads() {
+    navigationGeneration.current++;
     for (const controller of active.current) controller.abort();
+    clearDetail();
     setRecords([]);
-    setCurrent(null);
-    setVersions([]);
-    setVersion(null);
-    setProtection(null);
+    setPage(null);
+    setTotal(0);
     setComplete(false);
+  }
+  function fail(message: string) {
+    invalidateReads();
     setError(message);
+  }
+  function requestCurrent(
+    generation: number,
+    captured: ReturnType<typeof locationState>,
+    controller: AbortController,
+  ) {
+    return (
+      !controller.signal.aborted &&
+      navigationGeneration.current === generation &&
+      selectionRef.current === captured
+    );
   }
 
   const [selection, setSelection] = useState(locationState),
-    [records, setRecords] = useState<ReadRecord[]>([]),
+    [records, setRecords] = useState<PipelineSummary[]>([]),
+    [page, setPage] = useState<PipelinePage | null>(null),
     [current, setCurrent] = useState<ReadRecord | null>(null),
     [error, setError] = useState(""),
     [complete, setComplete] = useState(false),
     [total, setTotal] = useState(0),
     [refresh, setRefresh] = useState(0),
-    [all, setAll] = useState(false),
     [query, setQuery] = useState(""),
     [version, setVersion] = useState<unknown>(null),
     [protection, setProtection] = useState<ProtectionState | null>(null),
@@ -53,6 +75,7 @@ function App() {
       { versionId: string; createdAt: number }[]
     >([]);
   const selectionRef = useRef(selection);
+  const renderedGeneration = navigationGeneration.current;
   function selectLocation(url?: URL) {
     const next = locationState(url?.search ?? location.search);
     const previous = selectionRef.current;
@@ -60,13 +83,48 @@ function App() {
       next.grant === previous.grant &&
       next.record === previous.record &&
       next.history === previous.history &&
-      next.versionId === previous.versionId
+      next.versionId === previous.versionId &&
+      next.view === previous.view &&
+      next.cursor === previous.cursor
     )
       return;
-    clearDetail();
+    invalidateReads();
+    setError("");
+    if (next.grant !== previous.grant || next.view !== previous.view)
+      pageTrail.current = [];
+    else if (!url && next.cursor !== previous.cursor) {
+      const found = pageTrail.current.lastIndexOf(next.cursor);
+      pageTrail.current = found >= 0 ? pageTrail.current.slice(0, found) : [];
+    }
     selectionRef.current = next;
     if (url) window.history.pushState({}, "", url);
     setSelection(next);
+  }
+  function setAll(all: boolean) {
+    if (selectionRef.current.view === (all ? "all" : "relationships")) return;
+    const url = new URL(location.href);
+    url.searchParams.set("view", all ? "all" : "relationships");
+    url.searchParams.delete("cursor");
+    url.searchParams.delete("record");
+    url.searchParams.delete("history");
+    url.searchParams.delete("version");
+    selectLocation(url);
+  }
+  function setPageCursor(cursor: string | null) {
+    const url = new URL(location.href);
+    if (cursor) url.searchParams.set("cursor", cursor);
+    else url.searchParams.delete("cursor");
+    selectLocation(url);
+  }
+  function nextPage() {
+    if (selectionRef.current !== selection) return;
+    if (page?.status !== "available" || !page.nextCursor) return;
+    pageTrail.current.push(selectionRef.current.cursor);
+    setPageCursor(page.nextCursor);
+  }
+  function previousPage() {
+    if (selectionRef.current !== selection) return;
+    setPageCursor(pageTrail.current.pop() ?? null);
   }
   useEffect(() => {
     const pop = () => {
@@ -91,89 +149,98 @@ function App() {
     selectLocation(url);
   }
   useEffect(() => {
+    if (selectionRef.current !== selection || navigationGeneration.current !== renderedGeneration) return;
+    if (selection.record) return;
     const controller = new AbortController(),
       client = createReadClient(selection.grant, controller.signal);
+    const generation = renderedGeneration,
+      captured = selection;
+    const current = () => requestCurrent(generation, captured, controller);
     active.current.add(controller);
     setRecords([]);
-    setCurrent(null);
-    setProtection(null);
+    setPage(null);
     setComplete(false);
     setTotal(0);
     setError("");
     let expiry: ReturnType<typeof setTimeout> | undefined;
-    async function load() {
+    void (async () => {
       try {
         if (!selection.grant)
           throw Error(
             "Select an existing workspace grant to view observations.",
           );
         const session = await client.session();
-        if (controller.signal.aborted) return;
-        expiry = setTimeout(
-          () => {
+        if (!current()) return;
+        if (session.expiresAtMs <= Date.now())
+          throw Error("Workspace grant expired. Select a current grant.");
+        expiry = setTimeout(() => {
+          if (current())
             fail("Workspace grant expired. Select a current grant.");
-          },
-          Math.max(0, session.expiresAtMs - Date.now()),
+        }, session.expiresAtMs - Date.now());
+        const result = await client.pipelinePage(
+          selection.view,
+          selection.cursor,
         );
-        const summaries: ReadSummary[] = [];
-        let cursor: string | null = null;
-        const seen = new Set<string>();
-        do {
-          const page = await client.page("opportunity", cursor);
-          if (controller.signal.aborted) return;
-          for (const row of page.items) {
-            if (seen.has(row.entityId))
-              throw Error("Duplicate record in pagination");
-            seen.add(row.entityId);
-            summaries.push(row);
-          }
-          cursor = page.nextCursor;
-        } while (cursor && !controller.signal.aborted);
-        setTotal(summaries.length);
-        for (let i = 0; i < summaries.length; i += 4) {
-          const detail = await Promise.all(
-            summaries
-              .slice(i, i + 4)
-              .map((row) => client.detail(row.kind, row.entityId)),
-          );
-          if (controller.signal.aborted) return;
-          if (detail.some((row) => row === null))
-            throw Error("Record changed while loading. Refresh the workspace.");
-          setRecords((previous) => [
-            ...previous,
-            ...detail.filter((row): row is ReadRecord => row !== null),
-          ]);
+        if (!current()) return;
+        setPage(result);
+        if (result.status === "available") {
+          setRecords([...result.items]);
+          setTotal(result.totalObservations);
         }
-        if (!controller.signal.aborted) setComplete(true);
+        setComplete(true);
       } catch (e) {
-        if (!controller.signal.aborted) {
+        if (current())
           fail(e instanceof Error ? e.message : "Workspace read failed");
-        }
       }
-    }
-    void load();
+    })();
     return () => {
       controller.abort();
       active.current.delete(controller);
       if (expiry) clearTimeout(expiry);
     };
-  }, [selection.grant, refresh]);
+  }, [
+    selection.grant,
+    selection.view,
+    selection.cursor,
+    selection.record,
+    selection.history,
+    selection.versionId,
+    refresh,
+  ]);
   useEffect(() => {
+    if (selectionRef.current !== selection || navigationGeneration.current !== renderedGeneration) return;
     setCurrent(null);
     setVersions([]);
     setVersion(null);
     setProtection(null);
     const selectedRecord = selection.record;
-    if (!selectedRecord || !selection.grant) return;
+    if (!selectedRecord) return;
+    if (!selection.grant) {
+      fail("Select an existing workspace grant to view observations.");
+      return;
+    }
     const controller = new AbortController(),
       client = createReadClient(selection.grant, controller.signal);
+    const generation = renderedGeneration,
+      captured = selection;
+    const current = () => requestCurrent(generation, captured, controller);
+    let expiry: ReturnType<typeof setTimeout> | undefined;
+    setError("");
     active.current.add(controller);
     detailController.current = controller;
     void (async () => {
       try {
+        const session = await client.session();
+        if (!current()) return;
+        if (session.expiresAtMs <= Date.now())
+          throw Error("Workspace grant expired. Select a current grant.");
+        expiry = setTimeout(() => {
+          if (current())
+            fail("Workspace grant expired. Select a current grant.");
+        }, session.expiresAtMs - Date.now());
         const row = await client.detail("opportunity", selectedRecord);
         if (!row) throw Error("Observation no longer available.");
-        if (controller.signal.aborted) return;
+        if (!current()) return;
         setCurrent(row);
         let protectionVersion =
           row.history === "versioned" ? row.versionId : null;
@@ -184,26 +251,27 @@ function App() {
             const page = await client.versions(row.lineageId, cursor);
             found.push(...page.items);
             cursor = page.nextCursor;
-          } while (cursor && !controller.signal.aborted);
-          if (!controller.signal.aborted) setVersions(found);
+          } while (cursor && current());
+          if (current()) setVersions(found);
           if (selection.versionId) {
             const selected = await client.version(selection.versionId);
             if (
+              selected.versionId !== selection.versionId ||
               selected.lineageId !== row.lineageId ||
               selected.entityId !== row.entityId
             )
               throw Error("Version does not belong to the selected record.");
-            if (controller.signal.aborted) return;
+            if (!current()) return;
             setVersion(selected);
             protectionVersion = selected.versionId;
           }
         }
-        if (controller.signal.aborted) return;
+        if (!current()) return;
         if (protectionVersion) {
           setProtection({ status: "loading", versionId: protectionVersion });
           try {
             const view = await client.protection(protectionVersion);
-            if (controller.signal.aborted) return;
+            if (!current()) return;
             setProtection({ status: "available", view });
           } catch (e) {
             throw Error(
@@ -213,7 +281,7 @@ function App() {
           }
         }
       } catch (e) {
-        if (!controller.signal.aborted) {
+        if (current()) {
           fail(e instanceof Error ? e.message : "Read denied");
         }
       }
@@ -221,9 +289,12 @@ function App() {
     return () => {
       controller.abort();
       active.current.delete(controller);
+      if (expiry) clearTimeout(expiry);
     };
   }, [
     selection.grant,
+    selection.view,
+    selection.cursor,
     selection.record,
     selection.history,
     selection.versionId,
@@ -246,7 +317,8 @@ function App() {
           <span>WORKSPACE / PIPELINE</span>
           <button
             onClick={() => {
-              clearDetail();
+              invalidateReads();
+              setError("");
               setRefresh((x) => x + 1);
             }}
           >
@@ -276,9 +348,20 @@ function App() {
               complete={complete}
               loaded={records.length}
               total={total}
+              historicalRelationships={
+                page?.status === "available" ? page.historicalRelationships : 0
+              }
+              range={
+                page?.status === "available" ? page.range : { start: 0, end: 0 }
+              }
+              nextCursor={page?.status === "available" ? page.nextCursor : null}
+              canPrevious={selection.cursor !== null}
+              next={nextPage}
+              previous={previousPage}
+              unavailable={page?.status === "unavailable" ? page.reason : null}
               query={query}
               setQuery={setQuery}
-              all={all}
+              all={selection.view === "all"}
               setAll={setAll}
               select={select}
               history={selection.history}
@@ -295,9 +378,4 @@ function App() {
   );
 }
 const root = document.getElementById("root");
-if (root)
-  createRoot(root).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
+if (root) createRoot(root).render(<App />);

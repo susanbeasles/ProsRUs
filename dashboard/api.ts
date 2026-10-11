@@ -34,7 +34,7 @@ export async function request(
   if (
     body !== undefined ||
     !selection?.grantId ||
-    !/^\/api\/operations\/job_stack_(session|records|version|versions|request|protection)(?:\?|$)/.test(
+    !/^\/api\/operations\/job_stack_(session|records|pipeline_page|version|versions|request|protection)(?:\?|$)/.test(
       path,
     )
   )
@@ -91,6 +91,11 @@ export type ReadProtection = OutputById["job-stack.protection.read.v1"];
 export type ProtectionState =
   | { status: "available"; view: ReadProtection }
   | { status: "loading"; versionId: string };
+export type PipelinePage = OutputById["job-stack.pipeline.page.read.v1"];
+export type PipelineSummary = Extract<
+  PipelinePage,
+  { status: "available" }
+>["items"][number];
 export type ReadRecord = NonNullable<
   Extract<
     OutputById["job-stack.records.read.v1"],
@@ -134,9 +139,49 @@ export function createReadClient(grantId: string, signal?: AbortSignal) {
         throw Error("Invalid record page");
       return { items: result.items, nextCursor: result.nextCursor };
     },
+    async pipelinePage(view: "relationships" | "all", cursor: string | null) {
+      const result = validateCoreOutput(
+        "job-stack.pipeline.page.read.v1",
+        await request(
+          "/api/operations/job_stack_pipeline_page?" +
+            new URLSearchParams({ view, ...(cursor ? { cursor } : {}) }),
+          undefined,
+          selection,
+        ),
+      );
+      if (result.view !== view) throw Error("Pipeline view mismatch");
+      if (result.status === "available") {
+        const ids = result.items.map((row) => row.entityId);
+        const total =
+          view === "all"
+            ? result.totalObservations
+            : result.historicalRelationships;
+        if (
+          new Set(ids).size !== ids.length ||
+          result.historicalRelationships > result.totalObservations ||
+          result.range.end > total ||
+          (ids.length
+            ? result.range.start < 1 ||
+              result.range.end - result.range.start + 1 !== ids.length
+            : result.range.start !== 0 ||
+              result.range.end !== 0 ||
+              total !== 0) ||
+          (view === "relationships" &&
+            result.items.some((row) => !row.inPipeline)) ||
+          (result.nextCursor !== null &&
+            (!ids.length ||
+              result.nextCursor === cursor ||
+              result.range.end >= total)) ||
+          (result.nextCursor === null && result.range.end !== total)
+        )
+          throw Error("Invalid pipeline page");
+      }
+      return result;
+    },
     async detail(kind: string, entityId: string) {
       const result = await records({ kind, entityId });
       if (result.record === undefined) throw Error("Invalid record detail");
+      if (result.record !== null && (result.record.kind !== kind || result.record.entityId !== entityId)) throw Error("Record detail identity mismatch");
       return result.record;
     },
     async versions(lineageId: string, cursor: string | null) {

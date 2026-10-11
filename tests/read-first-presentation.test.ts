@@ -8,7 +8,7 @@ import {
 import type { ReadRecord } from "../dashboard/api";
 function props(current: ReadRecord): PipelineProps {
   return {
-    records: [current],
+    records: [],
     current,
     selected: current.entityId,
     complete: true,

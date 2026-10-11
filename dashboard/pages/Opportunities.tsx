@@ -2,10 +2,18 @@ import {
   label,
   objectFields,
   type ReadRecord,
+  type PipelineSummary,
   type ProtectionState,
 } from "../api";
 export type PipelineProps = {
-  records: readonly ReadRecord[];
+  records: readonly PipelineSummary[];
+  historicalRelationships?: number;
+  range?: { readonly start: number; readonly end: number };
+  nextCursor?: string | null;
+  canPrevious?: boolean;
+  next?: () => void;
+  previous?: () => void;
+  unavailable?: string | null;
   current: ReadRecord | null;
   selected: string | null;
   complete: boolean;
@@ -194,56 +202,111 @@ export function Opportunities(p: PipelineProps) {
       </section>
     );
   }
-  const pipeline = p.records.filter((r) => view(r).inPipeline === true);
-  const visible = (p.all ? p.records : pipeline).filter((r) =>
-    JSON.stringify(r.body).toLowerCase().includes(p.query.toLowerCase()),
+  const visible = p.records.filter((row) =>
+    JSON.stringify({ entityId: row.entityId, display: row.display })
+      .toLowerCase()
+      .includes(p.query.toLowerCase()),
   );
   return (
     <>
       <div className="actions">
         <button aria-pressed={!p.all} onClick={() => p.setAll(false)}>
-          Historical relationships {p.complete ? pipeline.length : "…"}
+          Historical relationships{" "}
+          {p.complete && !p.unavailable ? p.historicalRelationships : "…"}
         </button>
         <button aria-pressed={p.all} onClick={() => p.setAll(true)}>
-          All observations {p.complete ? p.records.length : "…"}
+          All observations {p.complete && !p.unavailable ? p.total : "…"}
         </button>
       </div>
-      <input
-        className="search"
-        placeholder="Search company, role or observed state"
-        aria-label="Search observations"
-        value={p.query}
-        onChange={(e) => p.setQuery(e.target.value)}
-      />
-      {!p.complete && (
-        <p role="status">
-          Loading verified pages and details: {p.loaded} of {p.total || "…"}{" "}
-          observations. Counts are not complete yet.
-        </p>
-      )}
-      {p.complete && visible.length === 0 && (
-        <p role="status">No observations match this view.</p>
-      )}
-      <div className="cards">
-        {visible.map((row) => {
-          const v = view(row),
-            source = objectFields(objectFields(row.body).source);
-          return (
-            <article className="panel" key={row.entityId}>
-              <p className="eyebrow">{label(v.company)}</p>
-              <h2>{label(v.role)}</h2>
-              <span className="badge">{label(v.status ?? v.state)}</span>
-              <p>{label(v.stage ?? v.nextAction)}</p>
+      {p.unavailable ? (
+        <section role="status" className="panel">
+          <h2>Verified page unavailable</h2>
+          <p>
+            {p.unavailable === "page_capacity"
+              ? "This dataset exceeds the supported page capacity. No observations have been omitted or loaded automatically."
+              : "This dataset does not have the supported pending-import geometry."}
+          </p>
+        </section>
+      ) : (
+        <>
+          <input
+            className="search"
+            placeholder="Search this page by company, role or observed state"
+            aria-label="Search this page"
+            value={p.query}
+            onChange={(e) => p.setQuery(e.target.value)}
+          />
+          {!p.complete ? (
+            <p role="status">Loading one verified page…</p>
+          ) : (
+            <>
               <p className="muted">
-                {label(source.sourceId)} · Source checked {label(v.verifiedAt)}
+                Source-observed totals: {p.total} observations ·{" "}
+                {p.historicalRelationships ?? 0} historical relationships.
+                Showing {p.range?.start ?? 0}–{p.range?.end ?? 0} in this view.
+                Search covers this page only.
               </p>
-              <button onClick={() => p.select(row.entityId)}>
-                Open observation
-              </button>
-            </article>
-          );
-        })}
-      </div>
+              {visible.length === 0 && (
+                <p role="status">
+                  {p.records.length
+                    ? "No observations on this page match your search."
+                    : "No source observations match this view."}
+                </p>
+              )}
+            </>
+          )}
+          <div className="cards">
+            {visible.map((row) => (
+              <article className="panel" key={row.entityId}>
+                {row.display.status === "available" ? (
+                  <>
+                    <p className="eyebrow">{row.display.company}</p>
+                    <h2>{row.display.role}</h2>
+                    <span className="badge">
+                      {label(row.display.observedStatus)}
+                    </span>
+                    <p>{row.display.stage}</p>
+                    <p>{row.display.nextAction}</p>
+                    <p className="muted">
+                      {row.display.sourceLabel} · {row.display.sourceId} ·
+                      Source checked {label(row.display.verifiedAt)}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h2>{row.entityId}</h2>
+                    <p>
+                      Display unavailable:{" "}
+                      {row.display.reason === "too_large"
+                        ? "source fields exceed the display limit"
+                        : "source fields are unknown"}
+                      .
+                    </p>
+                  </>
+                )}
+                <p className="muted">
+                  Signed history and protection pending. No current pursuit or
+                  action approval.
+                </p>
+                <button onClick={() => p.select(row.entityId)}>
+                  Open observation
+                </button>
+              </article>
+            ))}
+          </div>
+          <div className="actions" aria-label="Page navigation">
+            <button
+              disabled={!p.complete || !p.canPrevious}
+              onClick={p.previous}
+            >
+              Previous page
+            </button>
+            <button disabled={!p.complete || !p.nextCursor} onClick={p.next}>
+              Next page
+            </button>
+          </div>
+        </>
+      )}
     </>
   );
 }

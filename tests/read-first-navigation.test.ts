@@ -63,6 +63,8 @@ type Selection = {
   record: string | null;
   history: boolean;
   versionId: string | null;
+  view: "relationships" | "all";
+  cursor: string | null;
 };
 function fixture(query: string) {
   const url = new URL("https://local.invalid/owner/job-stack?" + query),
@@ -73,6 +75,8 @@ function fixture(query: string) {
     record: params.get("record"),
     history: params.get("history") === "1",
     versionId: params.get("version"),
+    view: params.get("view") === "all" ? "all" : "relationships",
+    cursor: params.get("cursor"),
   };
   const state: {
     current: unknown;
@@ -97,6 +101,11 @@ function fixture(query: string) {
     selectionRef: { current: selection },
     refresh: 0,
     detailController: { current: controller },
+    navigationGeneration: {current:0},
+    pageTrail: {current:[]},
+    active: {current:new Set([controller])},
+    page:null,
+    setRecords:()=>{},setPage:()=>{},setTotal:()=>{},setComplete:()=>{},setError:()=>{},
     setCurrent: (v: unknown) => {
       cleared++;
       state.current = v;

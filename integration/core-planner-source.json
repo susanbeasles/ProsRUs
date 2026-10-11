@@ -13,7 +13,7 @@
   "files": [
     {
       "path": "integration/shared-contract.mjs",
-      "sha256": "07e3f3300b6ddd75502214cbc8a943c670cebae09f709eb306346a578e814c36"
+      "sha256": "3f66858a43ba7281bd16469906b2dbb1900282ba4b7f615c0efddb407648dedb"
     },
     {
       "path": "package-lock.json",
@@ -84,5 +84,5 @@
       "sha256": "7ad949363534622b32b73ef6636d2e732fe5c25bcdb1dd16b859ed6f2fa7a36f"
     }
   ],
-  "sourceDigest": "97d97bf5fa8261639a7d4fce6a38b99e64c50c7fc19c6e912daabfb50aafd0dc"
+  "sourceDigest": "c2913e10b9f98023fe30418733d92589a763674d01204d4f763283f3f4dba07b"
 }

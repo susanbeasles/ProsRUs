@@ -148,6 +148,11 @@ const artifactDownload=object({versionId:artifactIdSchema,artifactIndex:integer(
 const recordBase={kind:{enum:RECORD_KINDS},entityId:artifactIdSchema,revision:{...string(1,16),pattern:'^[1-9][0-9]*$'},updatedAt:timeSchema};
 const recordSummary={oneOf:[object({origin:{enum:['domain_record','legacy_import']},history:{const:'legacy_unversioned'},...recordBase}),object({origin:{const:'domain_record'},history:{const:'versioned'},...recordBase,lineageId:artifactIdSchema,versionId:artifactIdSchema,manifestDigest:digestSchema}),object({origin:{const:'generic_archive'},history:{const:'versioned'},...recordBase,revision:{type:'null'},lineageId:artifactIdSchema,versionId:artifactIdSchema,manifestDigest:digestSchema})]};
 const recordPage=object({items:array(recordSummary,100),nextCursor:cursor});
+// Independent read-only projection; existing record summaries/details stay unchanged.
+const pipelineDisplay={oneOf:[object({status:{const:'available'},company:string(1,500),role:string(1,500),observedStatus:string(1,100),stage:string(1,500),nextAction:string(1,1000),verifiedAt:nullable(string(1,100)),sourceLabel:string(1,100),sourceId:string(1,100)}),object({status:{const:'unavailable'},reason:{enum:['unknown','too_large']}})]};
+const pipelineItem=object({...recordBase,kind:{const:'opportunity'},origin:{const:'legacy_import'},history:{const:'legacy_unversioned'},protection:{const:'import_pending'},approval:{const:'No current pursuit or action approval'},inPipeline:boolean,display:pipelineDisplay});
+const pipelineBase={format:{const:'pipeline-page-v1'},workspaceId:artifactIdSchema,view:{enum:['relationships','all']}};
+const pipelinePage={oneOf:[object({...pipelineBase,status:{const:'available'},datasetId:digestSchema,importObservedAt:timeSchema,totalObservations:integer(0,154),historicalRelationships:integer(0,154),range:object({start:integer(0,154),end:integer(0,154)}),items:array(pipelineItem,20),nextCursor:nullable(string(1,4096))}),object({...pipelineBase,status:{const:'unavailable'},reason:{enum:['page_capacity','unavailable_geometry']}})]};
 const readProvenance=nullable(object({format:{const:'audited-source-context-v1'},status:{enum:['available','too_large']},sourceReceipts:array(object({name:string(1,100),rawSha256:digestSchema,sizeBytes:integer(1)}),5),context:{}}));
 const recordDetail=object({record:nullable({oneOf:recordSummary.oneOf.map(schema=>object({...schema.properties,body:{},bodyStatus:{enum:['available','invalid_json','too_large']},provenance:readProvenance}))})});
 const versionSummary=object({versionId:artifactIdSchema,lineageId:artifactIdSchema,entityId:artifactIdSchema,kind:recoverySchemas.versionManifestSchema.properties.kind,parentVersionIds:uniqueIds,createdAt:timeSchema,approval:{enum:['draft','approved','revoked','unverified']}});
@@ -169,6 +174,7 @@ const domainRows=[
 ];
 export const coreOperations=freeze([
  core('job_stack_session','job-stack.session.read.v1','read',readInput({}),object(sessionFields),16384),
+ {...core('job_stack_pipeline_page','job-stack.pipeline.page.read.v1','read',readInput({view:{enum:['relationships','all']},cursor:nullable(string(1,4096))}),pipelinePage,64000),scope:'job-stack.records.read'},
  core('job_stack_records','job-stack.records.read.v1','read',{oneOf:[readInput({kind:{enum:RECORD_KINDS},cursor}),readInput({kind:{enum:RECORD_KINDS},entityId:artifactIdSchema})]},{oneOf:[recordPage,recordDetail]},65536),
  core('job_stack_profile','job-stack.profile.read.v1','read',readInput({cursor}),recordPage,65536),
  core('job_stack_version','job-stack.version.read.v1','read',readInput({versionId:artifactIdSchema}),recoverySchemas.versionManifestSchema),
@@ -184,7 +190,7 @@ export const coreOperations=freeze([
  core('job_stack_export_profile','job-stack.profile.export.v1','private-export',mutationInput({changeSetId:artifactIdSchema,format:{enum:['plain_text','json']}}),object({status:{const:'exported'},sourceVersionId:artifactIdSchema,artifact:artifactDownload,save:saveResult}),8192),
  ...domainRows.map(([name,id,domain,ownerOnly])=>core('job_stack_'+name,'job-stack.'+id+'.v1','local-write',mutationInput({body:domainBodySchemas[domain]}),domainOutput,8192,['mcp','owner-json'],ownerOnly,domain)),
 ]);
-export const CORE_SCOPES=freeze(coreOperations.map(o=>o.scope));
+export const CORE_SCOPES=freeze([...new Set(coreOperations.map(o=>o.scope))]);
 export const INTERNAL_OPERATION=freeze({id:'job-stack.recovery.commit.v1',version:1,scope:'job-stack.recovery.commit',effect:'recovery-commit',inputSchema:readInput({transactionId:artifactIdSchema}),outputSchema:recoverySchemas.commitCertificateSchema,transport:['recovery'],maxInputBytes:131072,maxOutputBytes:131072});
 export const RUNTIME_SCOPES=freeze([...CORE_SCOPES,INTERNAL_OPERATION.scope]);
 export function operationById(id){return coreOperations.find(o=>o.id===id)??(id===INTERNAL_OPERATION.id?INTERNAL_OPERATION:null);}
