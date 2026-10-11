@@ -93,7 +93,9 @@ const queries = (
   databaseId: string,
   statements: PendingSql[],
 ): Effect => ({ kind, payload: { databaseId, statements } });
-/** Static parent-owned connector template. Binary/atomic/API compatibility is UNQUALIFIED until separately probed. */
+/** Static parent-owned connector template. UTF-8 string results preserve scalar bytes;
+ * broker size/hash checks remain mandatory. Exact provider transport and arbitrary
+ * binary compatibility stay UNQUALIFIED until separately probed. */
 export function connectorEnvelope(approval: OperatorApproval, effect: Effect) {
   demand(effect.kind !== "current" && effect.kind !== "done");
   const p = effect.payload as {
@@ -120,7 +122,7 @@ export function connectorEnvelope(approval: OperatorApproval, effect: Effect) {
           }
         : {}),
     };
-  const code = `async () => { const request=${stable(request)}; const kind=${JSON.stringify(effect.kind)}; const count=${p.statements?.length ?? 0}; if(kind==='r2.put'){request.body=Uint8Array.from(atob(request.bodyBase64),c=>c.charCodeAt(0));delete request.bodyBase64;} const response=await cloudflare.request(request); if(kind==='r2.get'&&response.status===404)return null; if(!response.success)throw Error('operator-provider-failed'); let result; if(kind.startsWith('d1.')){if(!Array.isArray(response.result)||response.result.length!==count||response.result.some(r=>r.success!==true||!Array.isArray(r.results)))throw Error('operator-result-order');result=kind==='d1.batch'?{statements:count}:{rows:response.result[0].results};}else if(kind==='r2.put')result={written:true};else{const r=response.result;if(!r||Object.keys(r).sort().join(',')!=='base64'||typeof r.base64!=='string')throw Error('operator-binary-unqualified');result={base64:r.base64};} if(new TextEncoder().encode(JSON.stringify(result)).length>${L.response})throw Error('operator-result-bound');return result; }`;
+  const code = `async () => { const request=${stable(request)}; const kind=${JSON.stringify(effect.kind)}; const count=${p.statements?.length ?? 0}; if(kind==='r2.put'){request.body=Uint8Array.from(atob(request.bodyBase64),c=>c.charCodeAt(0));delete request.bodyBase64;} const response=await cloudflare.request(request); if(kind==='r2.get'&&response.status===404)return null; if(!response.success)throw Error('operator-provider-failed'); let result; if(kind.startsWith('d1.')){if(!Array.isArray(response.result)||response.result.length!==count||response.result.some(r=>r.success!==true||!Array.isArray(r.results)))throw Error('operator-result-order');result=kind==='d1.batch'?{statements:count}:{rows:response.result[0].results};}else if(kind==='r2.put')result={written:true};else{const r=response.result;if(typeof r==='string'){if(r.length>${L.original})throw Error('operator-original-bound');for(let i=0;i<r.length;i++){const c=r.charCodeAt(i);if(c>=0xD800&&c<=0xDBFF){const next=r.charCodeAt(++i);if(!(next>=0xDC00&&next<=0xDFFF))throw Error('operator-utf8-scalar');}else if(c>=0xDC00&&c<=0xDFFF)throw Error('operator-utf8-scalar');}const bytes=new TextEncoder().encode(r);if(bytes.length>${L.original})throw Error('operator-original-bound');const chunks=[];for(let start=0;start<bytes.length;start+=8192){let chunk='';for(let i=start;i<Math.min(start+8192,bytes.length);i++)chunk+=String.fromCharCode(bytes[i]);chunks.push(chunk);}result={base64:btoa(chunks.join(''))};}else{if(!r||Object.keys(r).sort().join(',')!=='base64'||typeof r.base64!=='string')throw Error('operator-binary-unqualified');result={base64:r.base64};}} if(new TextEncoder().encode(JSON.stringify(result)).length>${L.response})throw Error('operator-result-bound');return result; }`;
   const args = { account_id: approval.accountId, code };
   return {
     args,

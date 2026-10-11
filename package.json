@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24 <25"
   },
   "scripts": {
     "test": "vitest run",
@@ -12,8 +12,8 @@
     "build": "vite build",
     "dev": "wrangler dev --config wrangler.local.jsonc",
     "lint": "eslint src dashboard tests",
-    "format": "prettier --write src dashboard tests",
-    "verify": "npm run typecheck && npm run lint && npm run check:recovery-schemas && npm run check:core-planner && npm test && npm run test:runtime && npm run test:audited-import && npm run test:recovery && npm run test:primary && npm run test:domain && npm run test:core && npm run build && npm run typecheck:operator && npm run test:operator && npm run test:pipeline",
+    "check:tooling": "node --test scripts/test-tooling-policy.mjs",
+    "verify": "npm run check:tooling && npm run typecheck && npm run lint && npm run check:recovery-schemas && npm run check:core-planner && npm test && npm run test:runtime && npm run test:audited-import && npm run test:recovery && npm run test:primary && npm run test:domain && npm run test:core && npm run build && npm run typecheck:operator && npm run test:operator && npm run test:pipeline",
     "db:local": "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",
     "test:runtime": "node scripts/test-runtime.mjs",
     "bindings": "wrangler types src/bindings.d.ts --env-interface CloudflareBindings",
@@ -26,7 +26,7 @@
     "typecheck:strict": "tsc -p tsconfig.worker.json && tsc -p tsconfig.node-port.json && tsc -p tsconfig.dashboard.json",
     "test:read-first": "vitest run tests/read-first-client.test.ts tests/read-first-navigation.test.ts tests/read-first-presentation.test.ts tests/read-first-effects.test.ts tests/audited-legacy-import.test.ts && node scripts/test-audited-import.mjs",
     "test:audited-import": "node scripts/test-audited-import.mjs",
-    "test:operator": "node --test scripts/test-operator-broker.mjs && node --test scripts/test-operator-kernel-runtime.mjs",
+    "test:operator": "node --test scripts/test-operator-broker.mjs && node --test scripts/test-operator-kernel-runtime.mjs && node --test scripts/test-operator-utf8-transport.mjs",
     "typecheck:operator": "tsc -p tsconfig.operator.json && tsc -p tsconfig.operator-worker.json",
     "test:pipeline": "node scripts/test-pipeline-contract.mjs && node scripts/test-pipeline-runtime.mjs"
   },
@@ -45,7 +45,6 @@
     "esbuild": "0.28.2",
     "eslint": "10.12.0",
     "miniflare": "5.20261006.1-alpha",
-    "prettier": "3.9.9",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.1",
     "vite": "8.3.4",
