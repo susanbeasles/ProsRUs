@@ -1,4 +1,9 @@
 import {
+  completeReadCode,
+  validateCompleteRead,
+  type CompleteReadBinding,
+} from "./complete-read";
+import {
   planAuditedImport,
   type AuditedImportPlan,
 } from "../application/audited-legacy-import";
@@ -13,7 +18,7 @@ import {
   pendingRecordsStatement,
   pendingClockStatement,
   pendingWriteStatements,
-  observeOperatorPending,
+  observeOperatorPendingCompleteReads,
   type PendingSql,
   type PendingDatabase,
   type PendingStatement,
@@ -29,6 +34,7 @@ import {
   checkedResponse,
   requestFrame,
   type Effect,
+  type RequestFrame,
 } from "./protocol";
 type Original = {
   name: string;
@@ -93,10 +99,46 @@ const queries = (
   databaseId: string,
   statements: PendingSql[],
 ): Effect => ({ kind, payload: { databaseId, statements } });
-/** Static parent-owned connector template. UTF-8 string results preserve scalar bytes;
- * broker size/hash checks remain mandatory. Exact provider transport and arbitrary
- * binary compatibility stay UNQUALIFIED until separately probed. */
-export function connectorEnvelope(approval: OperatorApproval, effect: Effect) {
+/** Static source-owned templates. GET expected bytes come only from admitted prepared sources. */
+export function connectorEnvelope(
+  approval: OperatorApproval,
+  effect: Effect,
+  read?: { source: AuditedImportPlan["sources"][number]; frame: RequestFrame },
+) {
+  if (effect.kind === "r2.get") {
+    demand(read, "operator-read-context-required");
+    const source = required(
+      approval.sources.find(
+        (s) => s.key === (effect.payload as { key: string }).key,
+      ),
+    );
+    demand(
+      read.source.name === source.name &&
+        read.source.sizeBytes === source.sizeBytes &&
+        read.source.rawSha256 === source.sha256 &&
+        sha256(Buffer.from(read.source.rawUtf8)) === source.sha256 &&
+        Buffer.byteLength(read.source.rawUtf8) === source.sizeBytes &&
+        source.sizeBytes > 0 &&
+        source.sizeBytes <= L.original &&
+        stable({ kind: read.frame.kind, payload: read.frame.payload }) ===
+          stable(effect) &&
+        read.frame.actionDigest === sha256(stable(approval)),
+      "operator-read-context",
+    );
+    const code = completeReadCode({
+      binding: readBinding(approval, source, read.frame),
+      expectedBase64: b64(read.source),
+      expectedSha256: source.sha256,
+      expectedSize: source.sizeBytes,
+      expiresAtMs: approval.window.expiresAtMs,
+    });
+    const args = { account_id: approval.accountId, code };
+    return {
+      args,
+      codeBytes: utf8(code),
+      argumentBytes: utf8(JSON.stringify(args)),
+    };
+  }
   demand(effect.kind !== "current" && effect.kind !== "done");
   const p = effect.payload as {
     key: string;
@@ -279,7 +321,28 @@ export function prepareOperatorInput({
     effects.clock,
   ];
   const envelopes = possible.map((effect) => {
-    const envelope = connectorEnvelope(approval, effect),
+    const frame = requestFrame(effect, 128, actionDigest);
+    const envelope = connectorEnvelope(
+        approval,
+        effect,
+        effect.kind === "r2.get"
+          ? {
+              source: required(
+                plan.sources.find(
+                  (s) =>
+                    s.name ===
+                    required(
+                      approval.sources.find(
+                        (a) =>
+                          a.key === (effect.payload as { key: string }).key,
+                      ),
+                    ).name,
+                ),
+              ),
+              frame,
+            }
+          : undefined,
+      ),
       requestBytes = utf8(stable(requestFrame(effect, 128, actionDigest)));
     demand(
       requestBytes <= L.request &&
@@ -310,25 +373,20 @@ export function prepareOperatorInput({
   });
 }
 export type PreparedOperator = ReturnType<typeof prepareOperatorInput>;
-function originalResult(value: unknown, source: Original, allowAbsent = false) {
-  if (value === null) {
-    demand(allowAbsent, "operator-original-absent");
-    return null;
-  }
-  demand(
-    shape(value, "base64") &&
-      typeof value.base64 === "string" &&
-      utf8(value.base64) <= Math.ceil(L.original / 3) * 4,
-    "operator-original-shape",
-  );
-  const bytes = Buffer.from(value.base64, "base64");
-  demand(
-    bytes.toString("base64") === value.base64 &&
-      bytes.length === source.sizeBytes &&
-      sha256(bytes) === source.sha256,
-    "operator-original-conflict",
-  );
-  return bytes;
+function readBinding(
+  approval: OperatorApproval,
+  source: Original,
+  frame: RequestFrame,
+): CompleteReadBinding {
+  return {
+    accountId: approval.accountId,
+    bucket: approval.bucket,
+    key: source.key,
+    sourceName: source.name,
+    actionDigest: frame.actionDigest,
+    sequence: frame.sequence,
+    requestDigest: frame.requestDigest,
+  };
 }
 /** Trusted parent validator/dispatcher. Ports are injected by the parent; no credential or tool acquisition. */
 export function createParentBroker(
@@ -416,7 +474,7 @@ export function createParentBroker(
     );
     return result.rows as Record<string, unknown>[];
   }
-  function advance(result: unknown) {
+  function advance(result: unknown, frame: RequestFrame) {
     if (
       [
         "custody-get",
@@ -425,9 +483,11 @@ export function createParentBroker(
         "final-original",
       ].includes(phase)
     ) {
-      const original = originalResult(
+      const source = at(approval.sources, ordinal);
+      const original = validateCompleteRead(
         result,
-        at(approval.sources, ordinal),
+        readBinding(approval, source, frame),
+        source,
         phase === "custody-get",
       );
       if (phase === "custody-get" && original === null) {
@@ -647,7 +707,16 @@ export function createParentBroker(
           result: null,
         });
       }
-      const envelope = connectorEnvelope(approval, effect);
+      const envelope = connectorEnvelope(
+        approval,
+        effect,
+        effect.kind === "r2.get"
+          ? {
+              source: at(prepared.plan.sources, ordinal),
+              frame,
+            }
+          : undefined,
+      );
       demand(
         utf8(text) +
           envelope.codeBytes +
@@ -690,7 +759,7 @@ export function createParentBroker(
       await active();
       guard();
       demand(utf8(stable(result)) <= L.response, "operator-response-bound");
-      advance(result);
+      advance(result, frame);
       await active();
       guard();
       const response = stable({
@@ -746,18 +815,33 @@ export async function runOperatorImport(
     stopped = false;
   let failure: unknown;
   const { approval, actionDigest, effects } = prepared;
-  async function request(effect: Effect) {
+  async function framedRequest(effect: Effect) {
     if (stopped) throw failure;
     const frame = requestFrame(effect, ++sequence, actionDigest);
     try {
       const response = checkedResponse(await exchange(stable(frame)), frame);
       demand(response.ok, "operator-parent-denied");
-      return response.result;
+      return { result: response.result, frame };
     } catch (e) {
       stopped = true;
       failure = e;
       throw e;
     }
+  }
+  async function request(effect: Effect) {
+    return (await framedRequest(effect)).result;
+  }
+  async function original(index: number, allowAbsent = false) {
+    const source = at(approval.sources, index);
+    const { result, frame } = await framedRequest(
+      at(effects.custody, index).get,
+    );
+    return validateCompleteRead(
+      result,
+      readBinding(approval, source, frame),
+      source,
+      allowAbsent,
+    );
   }
   const current = async () => {
     await request({ kind: "current", payload: {} });
@@ -766,11 +850,11 @@ export async function runOperatorImport(
   if (approval.mode === "import")
     for (let i = 0; i < effects.custody.length; i++) {
       const source = at(effects.custody, i),
-        result = await request(source.get);
+        result = await original(i, true);
       if (result === null) {
         await request(source.put);
-        originalResult(await request(source.get), at(approval.sources, i));
-      } else originalResult(result, at(approval.sources, i));
+        await original(i);
+      }
     }
   const statements = new WeakMap<PendingStatement, PendingSql>();
   const db: PendingDatabase = {
@@ -807,22 +891,24 @@ export async function runOperatorImport(
       return [];
     },
   };
-  const result = await observeOperatorPending(
+  const result = await observeOperatorPendingCompleteReads(
     {
       db,
       currentWorkspace: async () => prepared.plan.workspace,
       window: approval.window,
       current,
       resultOnly: approval.mode === "reconcile",
-      readOriginalCopy: async (name) => {
-        const index = approval.sources.findIndex((s) => s.name === name);
-        demand(index >= 0);
-        return required(
-          originalResult(
-            await request(at(effects.custody, index).get),
-            at(approval.sources, index),
-          ),
-        );
+      originalReads: {
+        kind: "operator-complete-read.v1",
+        accountId: approval.accountId,
+        bucket: approval.bucket,
+        actionDigest,
+        sources: approval.sources,
+        read: async (name) => {
+          const index = approval.sources.findIndex((s) => s.name === name);
+          demand(index >= 0);
+          return required(await original(index));
+        },
       },
     },
     prepared.plan,

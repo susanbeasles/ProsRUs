@@ -1,5 +1,6 @@
 process.env.CLOUDFLARE_CF_FETCH_ENABLED = "false";
 import test from "node:test";
+import { emittedRead } from "./operator-complete-read-fixtures.mjs";
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -220,12 +221,16 @@ function syntheticProvider(p) {
     source_snapshot: text,
     ...fixed,
   });
-  return async (_args, effect) => {
+  return async (args, effect) => {
     const payload = effect.payload;
     if (effect.kind === "r2.get")
-      return objects.has(payload.key)
-        ? { base64: objects.get(payload.key) }
-        : null;
+      return emittedRead(
+        args,
+        objects.has(payload.key)
+          ? Buffer.from(objects.get(payload.key), "base64")
+          : null,
+        { now: () => p.approval.window.nowMs + 1 },
+      );
     if (effect.kind === "r2.put") {
       objects.set(payload.key, payload.base64);
       return { written: true };
@@ -814,3 +819,110 @@ for (const [index, name] of ["plan", "profile", "approval"].entries()) {
     assert.ok(stderrBytes > 0 && stderrBytes < 4096);
   });
 }
+
+test("complete or absent receipt from another invocation cannot replay into custody", async () => {
+  const p = prepared();
+  const first = m.requestFrame(p.effects.custody[0].get, 1, p.actionDigest);
+  const args = m.connectorEnvelope(p.approval, p.effects.custody[0].get, {
+    source: p.plan.sources[0],
+    frame: first,
+  }).args;
+  for (const body of [null, Buffer.from(p.plan.sources[0].rawUtf8)]) {
+    const prior = await emittedRead(args, body);
+    const b = broker(p, async () => prior);
+    await b.accept(
+      m.stable(
+        m.requestFrame({ kind: "current", payload: {} }, 1, p.actionDigest),
+      ),
+    );
+    await assert.rejects(
+      b.accept(
+        m.stable(m.requestFrame(p.effects.custody[0].get, 2, p.actionDigest)),
+      ),
+      /operator-read-binding/,
+    );
+    assert.equal(b.state().requests, 1);
+    assert.equal(b.state().d1, 0);
+  }
+});
+test("proof absent, mismatch, stop or expiry after final await never yields final acknowledgement", async () => {
+  for (const fault of ["absent", "mismatch", "stop", "expiry", "current"]) {
+    const p = prepared(),
+      provider = syntheticProvider(p);
+    let final = false,
+      clock = 1000,
+      denied = false;
+    const b = m.createParentBroker(p, {
+      now: () => clock,
+      current: async () => {
+        if (denied) throw Error("synthetic-current-denied");
+      },
+      dispatch: async (args, effect) => {
+        if (final && effect.kind === "r2.get") {
+          if (fault === "absent") return emittedRead(args, null);
+          if (fault === "mismatch")
+            return emittedRead(args, Buffer.from("mismatch"));
+          const value = await provider(args, effect);
+          if (fault === "stop") b.stop();
+          if (fault === "expiry") clock = p.approval.window.expiresAtMs;
+          if (fault === "current") denied = true;
+          return value;
+        }
+        const result = await provider(args, effect);
+        if (
+          effect === p.effects.clock ||
+          (effect.kind === "d1.first" &&
+            effect.payload.statements[0].sql ===
+              p.effects.clock.payload.statements[0].sql)
+        )
+          final = true;
+        return result;
+      },
+    });
+    await assert.rejects(m.runOperatorImport(p, (text) => b.accept(text)));
+    assert.equal(final, true);
+    assert.equal(b.state().completed, false);
+    assert.equal(b.state().stopped, true);
+    assert.equal(b.state().batchOutcome, "committed");
+    assert.equal(b.state().r2, 21);
+    await assert.rejects(b.finish());
+  }
+});
+test("reconciliation consumes complete-read evidence, rejects initial absence and never writes", async () => {
+  const p = prepared("reconcile");
+  let writes = 0;
+  const b = broker(p, async (args, effect) => {
+    if (effect.kind === "r2.get") {
+      const index = p.approval.sources.findIndex(
+        (s) => s.key === effect.payload.key,
+      );
+      return emittedRead(args, Buffer.from(p.plan.sources[index].rawUtf8));
+    }
+    if (effect.kind === "r2.put" || effect.kind === "d1.batch") {
+      writes++;
+      throw Error("unexpected mutation");
+    }
+    return {
+      rows: [
+        {
+          source_snapshot: null,
+          p_snapshot: null,
+          record_count: 0,
+          baseline_count: 0,
+          source_count: 0,
+          stage_count: 0,
+          canonical_count: 0,
+        },
+      ],
+    };
+  });
+  assert.equal(await m.runOperatorImport(p, (text) => b.accept(text)), null);
+  await b.finish();
+  assert.equal(writes, 0);
+  const missing = broker(p, (args) => emittedRead(args, null));
+  await assert.rejects(
+    m.runOperatorImport(p, (text) => missing.accept(text)),
+    /operator-original-absent/,
+  );
+  assert.equal(missing.state().d1, 0);
+});

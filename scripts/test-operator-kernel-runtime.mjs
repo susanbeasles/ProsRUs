@@ -322,3 +322,197 @@ test(
     );
   },
 );
+
+test("general raw-copy API cannot select complete-read evidence by DTO fields", async () => {
+  const { plan, profile } = fixture();
+  const source = plan.sources[0];
+  const evidence = {
+    format: "job-stack.remote-original-read.v1",
+    complete: true,
+    literalBytesEqual: true,
+    sizeBytes: source.sizeBytes,
+    sha256: source.rawSha256,
+  };
+  let calls = 0;
+  const ports = {
+    currentWorkspace: async () => plan.workspace,
+    readOriginalCopy: async () => evidence,
+    originalReads: {
+      kind: "operator-complete-read.v1",
+      read: async () => evidence,
+    },
+    db: {
+      prepare() {
+        calls++;
+        throw Error("unexpected-d1");
+      },
+    },
+  };
+  await assert.rejects(
+    kernel.observeAuditedPending(ports, plan, profile),
+    /AUDIT_ORIGINAL_READBACK/,
+  );
+  await assert.rejects(
+    kernel.observeOperatorPending(
+      {
+        ...ports,
+        current: async () => {},
+        window: Object.freeze({ nowMs: 1, expiresAtMs: 100000 }),
+      },
+      plan,
+      profile,
+    ),
+    /AUDIT_ORIGINAL_READBACK/,
+  );
+  assert.equal(calls, 0);
+});
+
+test(
+  "real D1/R2 parent-child complete-read integration retains raw custody and gates final proof",
+  { timeout: 90000 },
+  async (t) => {
+    const { build } = await import("esbuild");
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { pathToFileURL } = await import("node:url");
+    const path = await import("node:path");
+    const output = await build({
+      stdin: {
+        contents:
+          "export * from './src/operator/import'; export * from './src/operator/protocol';",
+        resolveDir: process.cwd(),
+      },
+      bundle: true,
+      write: false,
+      platform: "node",
+      format: "esm",
+    });
+    await mkdir("artifacts/operator", { recursive: true });
+    const file = path.resolve("artifacts/operator/complete-read-kernel.mjs");
+    await writeFile(file, output.outputFiles[0].text);
+    const operator = await import(pathToFileURL(file));
+    const mf = new Miniflare(
+      convertV4MiniflareOptions({ ...options, d1Databases: ["DB"] }),
+    );
+    t.after(() => mf.dispose());
+    const db = await mf.getD1Database("DB"),
+      bucket = await mf.getR2Bucket("ORIGINALS");
+    await applyMigrations(db);
+    const { plan, profile } = fixture();
+    const approval = {
+      format: "job-stack.operator-approval.v1",
+      mode: "import",
+      actionId: "synthetic-real-complete-read",
+      accountId: "a".repeat(32),
+      databaseId: "00000000-0000-4000-8000-000000000001",
+      bucket: "synthetic-originals",
+      namespace: "synthetic/",
+      namespaceExclusive: true,
+      window: Object.freeze({
+        nowMs: Date.now() - 1000,
+        expiresAtMs: Date.now() + 60000,
+      }),
+      sourceClosureSha256: "b".repeat(64),
+      profileSha256: operator.sha256(JSON.stringify(profile)),
+      planSha256: operator.sha256(JSON.stringify(plan)),
+      sources: plan.sources.map((source, index) => ({
+        name: source.name,
+        key: `synthetic/${index}.json`,
+        sizeBytes: source.sizeBytes,
+        sha256: source.rawSha256,
+      })),
+    };
+    const prepared = operator.prepareOperatorInput({ plan, profile, approval });
+    let physicalCalls = 0,
+      acknowledged = 0;
+    const dispatch = async (args, effect) =>
+      new Function("cloudflare", "fetch", `return (${args.code})();`)(
+        {
+          request: async (request) => {
+            physicalCalls++;
+            if (request.method === "PUT") {
+              assert.equal(request.rawBody, true);
+              assert.equal(request.contentType, "application/json");
+              assert.ok(request.body instanceof Uint8Array);
+              await bucket.put(effect.payload.key, request.body);
+              return { success: true, result: null };
+            }
+            assert.equal(request.method, "POST");
+            const statements = request.body.batch.map(({ sql, params }) =>
+              db.prepare(sql).bind(...params),
+            );
+            return { success: true, result: await db.batch(statements) };
+          },
+        },
+        async (url, init) => {
+          physicalCalls++;
+          assert.equal(init.redirect, "manual");
+          assert.equal(
+            url,
+            `https://api.cloudflare.com/client/v4/accounts/${approval.accountId}/r2/buckets/${approval.bucket}/objects/${effect.payload.key}`,
+          );
+          const object = await bucket.get(effect.payload.key);
+          return object
+            ? new Response(object.body)
+            : new Response(
+                JSON.stringify({
+                  success: false,
+                  result: null,
+                  errors: [{ code: 10007, message: "Synthetic absent" }],
+                  messages: [],
+                }),
+                { status: 404 },
+              );
+        },
+      );
+    const broker = operator.createParentBroker(prepared, {
+      current: async () => {},
+      dispatch,
+    });
+    const result = await operator.runOperatorImport(prepared, (text) =>
+      broker.accept(text),
+    );
+    await broker.finish();
+    acknowledged++;
+    assert.deepEqual(result.receipt, plan.receipt);
+    assert.equal(physicalCalls, broker.state().requests);
+    assert.equal(broker.state().r2, 25);
+    assert.equal(acknowledged, 1);
+    for (const source of approval.sources) {
+      const object = await bucket.get(source.key);
+      const actual = new Uint8Array(await object.arrayBuffer());
+      assert.equal(operator.sha256(actual), source.sha256);
+      assert.equal(actual.length, source.sizeBytes);
+    }
+    await absent(db);
+    const reconciled = operator.prepareOperatorInput({
+      plan,
+      profile,
+      approval: {
+        ...approval,
+        mode: "reconcile",
+        actionId: "synthetic-real-reconcile",
+        window: Object.freeze({ ...approval.window }),
+      },
+    });
+    let get = 0;
+    const bad = operator.createParentBroker(reconciled, {
+      current: async () => {},
+      dispatch: async (args, effect) => {
+        if (effect.kind === "r2.get" && ++get === 6) {
+          return new Function("fetch", `return (${args.code})();`)(
+            async () => new Response("bad-final-read"),
+          );
+        }
+        assert.notEqual(effect.kind, "d1.batch");
+        assert.notEqual(effect.kind, "r2.put");
+        return dispatch(args, effect);
+      },
+    });
+    await assert.rejects(
+      operator.runOperatorImport(reconciled, (text) => bad.accept(text)),
+    );
+    assert.equal(get, 6);
+    assert.equal(bad.state().completed, false);
+    assert.equal(acknowledged, 1);
+  },
+);

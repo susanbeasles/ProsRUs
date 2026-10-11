@@ -54,12 +54,41 @@ export type OperatorPendingPorts = Omit<
   "stage" | "operator"
 > &
   OperatorWindow;
-/** Production operator admission cannot borrow the optional LOCAL/no-stage default. */
-export async function observeOperatorPending(
-  ports: OperatorPendingPorts,
-  plan: AuditedImportPlan,
-  profile: CheckedAuditedSourceProfile,
-) {
+export type OperatorCompleteReadEvidence = {
+  format: "job-stack.remote-original-read.v1";
+  accountId: string;
+  bucket: string;
+  key: string;
+  sourceName: string;
+  actionDigest: string;
+  sequence: number;
+  requestDigest: string;
+  status: 200;
+  complete: true;
+  sizeBytes: number;
+  sha256: string;
+  literalBytesEqual: true;
+};
+export type OperatorCompleteReads = {
+  kind: "operator-complete-read.v1";
+  accountId: string;
+  bucket: string;
+  actionDigest: string;
+  sources: readonly {
+    name: string;
+    key: string;
+    sizeBytes: number;
+    sha256: string;
+  }[];
+  read: (name: string) => Promise<OperatorCompleteReadEvidence>;
+};
+export type OperatorCompleteReadPorts = Omit<
+  OperatorPendingPorts,
+  "readOriginalCopy"
+> & {
+  originalReads: OperatorCompleteReads;
+};
+function admitOperator(ports: Omit<OperatorPendingPorts, "readOriginalCopy">) {
   demand(
     ports.window &&
       Object.isFrozen(ports.window) &&
@@ -73,12 +102,72 @@ export async function observeOperatorPending(
       !("operator" in ports),
     "AUDIT_OPERATOR_WINDOW_REQUIRED",
   );
-  const operator = Object.freeze({
+  return Object.freeze({
     window: Object.freeze({ ...ports.window }),
     current: ports.current,
   });
+}
+/** Existing operator/raw-copy callers still must supply actual Uint8Array readback. */
+export async function observeOperatorPending(
+  ports: OperatorPendingPorts,
+  plan: AuditedImportPlan,
+  profile: CheckedAuditedSourceProfile,
+) {
+  const operator = admitOperator(ports);
   await operator.current();
   return observeAuditedPending({ ...ports, operator }, plan, profile);
+}
+/** Trusted source adapter entry only. A public DTO cannot select this evidence mode.
+ * It verifies remote-read evidence, explicitly never claims to retrieve raw copies. */
+export async function observeOperatorPendingCompleteReads(
+  ports: OperatorCompleteReadPorts,
+  plan: AuditedImportPlan,
+  profile: CheckedAuditedSourceProfile,
+) {
+  const operator = admitOperator(ports);
+  const reads = ports.originalReads;
+  demand(
+    !("readOriginalCopy" in ports) &&
+      reads &&
+      Object.keys(reads).sort().join(",") ===
+        "accountId,actionDigest,bucket,kind,read,sources" &&
+      reads.kind === "operator-complete-read.v1" &&
+      typeof reads.read === "function" &&
+      /^[a-f0-9]{32}$/.test(reads.accountId) &&
+      /^[a-f0-9]{64}$/.test(reads.actionDigest) &&
+      /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(reads.bucket) &&
+      reads.sources.length === plan.sources.length &&
+      new Set(reads.sources.map((s) => s.key)).size === reads.sources.length &&
+      reads.sources.every((source, index) => {
+        const expected = plan.sources[index];
+        return (
+          expected &&
+          Object.keys(source).sort().join(",") ===
+            "key,name,sha256,sizeBytes" &&
+          source.name === expected.name &&
+          source.sizeBytes === expected.sizeBytes &&
+          source.sha256 === expected.rawSha256 &&
+          source.key.length > 0 &&
+          bytes(source.key) <= 1024 &&
+          source.key
+            .split("/")
+            .every(
+              (part) =>
+                /^[A-Za-z0-9_.-]+$/.test(part) && part !== "." && part !== "..",
+            )
+        );
+      }),
+    "AUDIT_OPERATOR_EVIDENCE_REQUIRED",
+  );
+  // Copy the identity before the first await; never retain caller-mutable authority.
+  const admitted = Object.freeze({
+    ...reads,
+    sources: Object.freeze(
+      reads.sources.map((source) => Object.freeze({ ...source })),
+    ),
+  });
+  await operator.current();
+  return observePending({ ...ports, operator }, plan, profile, admitted);
 }
 const fixed = {
   provenance: "imported_legacy_baseline",
@@ -340,6 +429,15 @@ export async function observeAuditedPending(
   requested: AuditedImportPlan,
   suppliedProfile: CheckedAuditedSourceProfile,
 ) {
+  return observePending(ports, requested, suppliedProfile);
+}
+async function observePending(
+  ports: Omit<PendingObservationPorts, "readOriginalCopy"> &
+    Partial<Pick<PendingObservationPorts, "readOriginalCopy">>,
+  requested: AuditedImportPlan,
+  suppliedProfile: CheckedAuditedSourceProfile,
+  completeReads?: OperatorCompleteReads,
+) {
   const profile = parseAuditedSourceProfile(suppliedProfile),
     schemas = createAuditedSchemas(profile),
     { db, stage, operator } = ports,
@@ -383,16 +481,67 @@ export async function observeAuditedPending(
       "AUDIT_WORKSPACE_MISMATCH",
     );
   }
+  let lastOriginalSequence = 0;
   async function originals() {
     for (const source of expected.sources) {
       await authority();
-      const copy = await ports.readOriginalCopy(source.name);
-      demand(
-        copy instanceof Uint8Array &&
-          copy.length === source.sizeBytes &&
-          hash(copy) === source.rawSha256,
-        "AUDIT_ORIGINAL_READBACK",
-      );
+      if (completeReads) {
+        const identity = completeReads.sources.find(
+          (s) => s.name === source.name,
+        );
+        demand(identity, "AUDIT_ORIGINAL_READBACK");
+        const evidence = await completeReads.read(source.name);
+        demand(
+          evidence &&
+            typeof evidence === "object" &&
+            Object.keys(evidence).sort().join(",") ===
+              "accountId,actionDigest,bucket,complete,format,key,literalBytesEqual,requestDigest,sequence,sha256,sizeBytes,sourceName,status" &&
+            bytes(encode(evidence)) <= 2048 &&
+            evidence.format === "job-stack.remote-original-read.v1" &&
+            evidence.accountId === completeReads.accountId &&
+            evidence.bucket === completeReads.bucket &&
+            evidence.actionDigest === completeReads.actionDigest &&
+            evidence.key === identity.key &&
+            evidence.sourceName === source.name &&
+            evidence.status === 200 &&
+            evidence.complete === true &&
+            evidence.literalBytesEqual === true &&
+            evidence.sizeBytes === source.sizeBytes &&
+            evidence.sha256 === source.rawSha256 &&
+            Number.isSafeInteger(evidence.sequence) &&
+            evidence.sequence > lastOriginalSequence &&
+            evidence.sequence <= 128 &&
+            evidence.requestDigest ===
+              hash(
+                encoder.encode(
+                  encode({
+                    actionDigest: completeReads.actionDigest,
+                    kind: "r2.get",
+                    payload: {
+                      bucket: completeReads.bucket,
+                      key: identity.key,
+                    },
+                    protocol: "job-stack.operator-broker.v1",
+                    sequence: evidence.sequence,
+                  }),
+                ),
+              ),
+          "AUDIT_ORIGINAL_READBACK",
+        );
+        lastOriginalSequence = evidence.sequence;
+      } else {
+        demand(
+          typeof ports.readOriginalCopy === "function",
+          "AUDIT_ORIGINAL_READBACK",
+        );
+        const copy = await ports.readOriginalCopy(source.name);
+        demand(
+          copy instanceof Uint8Array &&
+            copy.length === source.sizeBytes &&
+            hash(copy) === source.rawSha256,
+          "AUDIT_ORIGINAL_READBACK",
+        );
+      }
       await authority();
     }
   }
