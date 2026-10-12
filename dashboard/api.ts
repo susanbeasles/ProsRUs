@@ -26,6 +26,41 @@ export const snapshotSchema = z.object({
   intents: z.array(z.record(z.string(), z.unknown())),
 });
 export type Snapshot = z.infer<typeof snapshotSchema>;
+
+async function responseJson(response: Response, maxBytes: number, signal?: AbortSignal): Promise<unknown> {
+  if (!response.body) throw Error("Workspace response is invalid");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0, oversized = false;
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        oversized = true;
+        throw Error("overbound");
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
+  } catch {
+    cancel();
+    signal?.throwIfAborted();
+    throw Error(oversized ? "Workspace response exceeds the read size limit" : "Workspace response is invalid");
+  } finally {
+    signal?.removeEventListener("abort", cancel);
+    reader.releaseLock();
+  }
+}
+
 export async function request(
   path: string,
   body?: unknown,
@@ -41,6 +76,9 @@ export async function request(
     throw Error("Read-only workspace selection required");
   selection.signal?.throwIfAborted();
   const target = new URL("/owner/job-stack" + path, "https://local.invalid");
+  const operation = operationByName(target.pathname.split("/").at(-1) ?? "");
+  if (!operation || operation.effect !== "read")
+    throw Error("Read-only workspace selection required");
   target.searchParams.sort();
   const relative = target.pathname + target.search;
   const nonceQuery = new URLSearchParams({
@@ -56,7 +94,7 @@ export async function request(
   const { nonce } = z
     .object({ nonce: z.string().min(1) })
     .strict()
-    .parse(await nonceResponse.json());
+    .parse(await responseJson(nonceResponse, 4096, selection.signal));
   selection.signal?.throwIfAborted();
   target.searchParams.set("grant", selection.grantId);
   const response = await fetch(target.pathname + target.search, {
@@ -68,7 +106,7 @@ export async function request(
     throw Error(
       "Workspace read denied or unavailable. Refresh your selection.",
     );
-  const result: unknown = await response.json();
+  const result = await responseJson(response, operation.maxOutputBytes, selection.signal);
   selection.signal?.throwIfAborted();
   return result;
 }
@@ -84,6 +122,7 @@ export function label(value: unknown): string {
 
 export { validateCoreOutput } from "../integration/shared-contract.mjs";
 import {
+  operationByName,
   validateCoreOutput,
   type OutputById,
 } from "../integration/shared-contract.mjs";

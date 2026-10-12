@@ -11,6 +11,7 @@
  "d1_databases":[{"binding":"DB","database_name":"job-stack-staging","database_id":"00000000-0000-0000-0000-000000000000","migrations_dir":"migrations"}],
  "r2_buckets":[{"binding":"ARTIFACTS","bucket_name":"job-stack-staging"}],
  "durable_objects":{"bindings":[{"name":"COORDINATOR","class_name":"Coordinator"}]},
+ "services":[{"binding":"CONTROL_AUTHORITY","service":"personal-control","entrypoint":"JobStackAuthority"}],
  "migrations":[{"tag":"v1","new_sqlite_classes":["Coordinator"]}],
  "queues":{"producers":[{"binding":"JOBS","queue":"job-stack-staging"}],"consumers":[]},
  "triggers":{"crons":[]}

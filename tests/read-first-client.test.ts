@@ -146,3 +146,47 @@ it("does not send the protected data read after cancellation during nonce acquis
   ).rejects.toThrow();
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+it("bounds nonce response bytes before a protected read and cancels excess input", async () => {
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode('{"nonce":"' + "x".repeat(4096) + '"}')); },
+    pull(controller) { controller.error(Error("read past nonce bound")); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  const fetcher = vi.fn().mockResolvedValue(new Response(stream));
+  vi.stubGlobal("fetch", fetcher);
+  await expect(request("/api/operations/job_stack_records?kind=opportunity", undefined, { grantId: "synthetic" }))
+    .rejects.toThrow("Workspace response exceeds the read size limit");
+  expect(cancelled).toBe(true);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("enforces the existing operation output limit on streamed bytes before JSON parsing", async () => {
+  let pulls = 0, cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls++;
+      controller.enqueue(new Uint8Array(8192).fill(32));
+      if (pulls > 10) controller.close();
+    },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 });
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ nonce: "synthetic" }))
+    .mockResolvedValueOnce(new Response(stream));
+  vi.stubGlobal("fetch", fetcher);
+  await expect(request("/api/operations/job_stack_protection?versionId=synthetic", undefined, { grantId: "synthetic" }))
+    .rejects.toThrow("Workspace response exceeds the read size limit");
+  expect(pulls).toBe(3); // protection output is capped at 16384 bytes by the shared catalog.
+  expect(cancelled).toBe(true);
+});
+
+it("rejects malformed JSON and UTF-8 with a fixed error instead of echoing body data", async () => {
+  for (const body of [new TextEncoder().encode('PRIVATE_BODY_NOT_JSON'), new Uint8Array([0xff])]) {
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ nonce: "synthetic" }))
+      .mockResolvedValueOnce(new Response(body));
+    vi.stubGlobal("fetch", fetcher);
+    await expect(request("/api/operations/job_stack_records?kind=opportunity", undefined, { grantId: "synthetic" }))
+      .rejects.toThrow("Workspace response is invalid");
+  }
+});

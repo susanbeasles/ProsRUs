@@ -311,6 +311,7 @@ function App() {
           Dated source evidence, with every role and prior state retained.
         </p>
         <a href="/owner/job-stack">Choose workspace grant</a>
+        <a href="/owner">Personal Control</a>
       </aside>
       <main>
         <header className="topbar">
