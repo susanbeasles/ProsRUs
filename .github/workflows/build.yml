@@ -1,37 +1,13 @@
-name: Verify Job Stack
+name: Integration validation
 on:
   push:
     branches: ['int/**']
 concurrency:
   group: integration-${{ github.repository_id }}-${{ github.ref }}
   cancel-in-progress: true
-
 permissions:
   contents: read
+  id-token: write
 jobs:
-  admission:
-    permissions:
-      contents: read
-      id-token: write
-    uses: susanbeasles/workflow_depot/.github/workflows/admit-integration.yml@8659f3b78f23870e78ac8f7c98f72b5d786c229a
-    with:
-      candidate_sha: ${{ github.sha }}
-  verify:
-    needs: [admission]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24'
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm rebuild esbuild workerd --ignore-scripts=false
-      - run: npm run verify
-      - run: npx wrangler deploy --dry-run --outdir artifacts/worker
-        env:
-          WRANGLER_SEND_METRICS: 'false'
-      - run: node scripts/scan-secrets.mjs
+  validate:
+    uses: susanbeasles/workflow_depot/.github/workflows/validate-prosrus.yml@a430d212d3995173fa8fe4187c0132abf12546dc
