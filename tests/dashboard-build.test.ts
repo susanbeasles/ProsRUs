@@ -31,7 +31,7 @@ function files(dir: string, prefix = ""): string[] {
 describe("built dashboard", () => {
   it("has no inline script, inline style or style attribute in index.html (CSP style-src 'self')", () => {
     const html = readFileSync(join(out, "index.html"), "utf8");
-    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)];
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script[^>]*>/gi)];
     expect(scripts.length).toBeGreaterThan(0);
     for (const [, attributes, body] of scripts) {
       expect(attributes).toMatch(/\bsrc="\/owner\/job-stack\/assets\/[A-Za-z0-9_.-]+\.js"/);
