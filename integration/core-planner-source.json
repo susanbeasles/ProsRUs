@@ -1,0 +1,88 @@
+{
+  "format": "core-planner-source-v1",
+  "version": 1,
+  "entries": [
+    "src/domain/core-operation-plan.ts",
+    "src/application/core-operation-lifecycle.ts"
+  ],
+  "excludedDerivedFiles": [
+    "src/domain/core-operation-identity.ts",
+    "integration/core-planner-source.json"
+  ],
+  "dependencies": "package-lock.json",
+  "files": [
+    {
+      "path": "integration/shared-contract.mjs",
+      "sha256": "3f66858a43ba7281bd16469906b2dbb1900282ba4b7f615c0efddb407648dedb"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "a63d1fff36678f8bdc662136288c135285aeb5eb20fc740a9488eb11cbf1c43d"
+    },
+    {
+      "path": "scripts/generate-core-planner-identity.mjs",
+      "sha256": "b714fbfea3796a3884ea1db54e51b4215719919c9cb5f84006b243069c88c949"
+    },
+    {
+      "path": "src/application/core-operation-lifecycle.ts",
+      "sha256": "28dd079c5a3f76a2b78e372fd33b5ecfedbab659763c3f5f2a4f0e0a005c9211"
+    },
+    {
+      "path": "src/domain/core-operation-baseline.ts",
+      "sha256": "210d4d312e36d419666c8e6b11264f7e2c107e02a8e19e7578e411e7191dc009"
+    },
+    {
+      "path": "src/domain/core-operation-evidence.ts",
+      "sha256": "27e55f9adaf46bc6e399d781537ecee753264c1e11fb4c1d63c7d11bfdb3651d"
+    },
+    {
+      "path": "src/domain/core-operation-input.ts",
+      "sha256": "3f4cb8576dc5a7b9739c9db2baf15c3da428243fadf14d6992a1ae746708e3ef"
+    },
+    {
+      "path": "src/domain/core-operation-plan.ts",
+      "sha256": "e87a7c53cfd60188f6c4ece526d5f6e7636ebf3fb0c59c09588694e95297767e"
+    },
+    {
+      "path": "src/domain/core-operation-reads.ts",
+      "sha256": "1f34f8cc4487c36c2dd445872038428547aa562483cca724376a75667710b6bb"
+    },
+    {
+      "path": "src/domain/model.ts",
+      "sha256": "a83dba9e0e173437e678676d9f63e237fd782f494647f69c59dba51c6b77e725"
+    },
+    {
+      "path": "src/domain/profile-field.ts",
+      "sha256": "fc7b66887e27a57786fffdecc676674a8d2ea40eb8d2f0a8ae97ed267385a7c2"
+    },
+    {
+      "path": "src/domain/ranking.ts",
+      "sha256": "89b6f3fc9dabca635d2b9ce823ee731e03347511357af0b5804d29313fb513e6"
+    },
+    {
+      "path": "src/domain/recovery-canonical.ts",
+      "sha256": "1776d02d4f437707d900053b22af24b01e592a4da5b3c2c467572102a03296d8"
+    },
+    {
+      "path": "src/domain/recovery-domain-plan.ts",
+      "sha256": "9e5736a7c489f13d3e09d88678ede9d9dd60a7065bcac40d677ca419be13e6b0"
+    },
+    {
+      "path": "src/domain/recovery-record.ts",
+      "sha256": "f9f0b7a190f95df2029403edec59fe846077a9e927f0e6ed733725cf74c9c124"
+    },
+    {
+      "path": "src/domain/recovery.ts",
+      "sha256": "3b1f1da915b3376f966f77b6674439375fe145cdd455566e19a0a5c896b0435b"
+    },
+    {
+      "path": "src/domain/rules.ts",
+      "sha256": "044e81c28f1bcb86634e85e78935e4ad37955cfcaecb6990710b856ce81c2755"
+    },
+    {
+      "path": "src/domain/targeting-profile.ts",
+      "sha256": "7ad949363534622b32b73ef6636d2e732fe5c25bcdb1dd16b859ed6f2fa7a36f"
+    }
+  ],
+  "sourceDigest": "e75f2f624d2a9ac8d8988b239692cfcea312edd61f72cedca41929a83bec2e7d"
+}

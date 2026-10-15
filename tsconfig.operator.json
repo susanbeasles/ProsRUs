@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.node-port.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": true
+  },
+  "files": [
+    "tests/types/operator-import.ts"
+  ],
+  "include": []
+}

@@ -1,0 +1,56 @@
+{
+  "name": "job-stack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.runtime.json && npm run typecheck:strict",
+    "build": "vite build",
+    "dev": "wrangler dev --config wrangler.local.jsonc",
+    "lint": "eslint src dashboard tests",
+    "check:tooling": "node --test scripts/test-tooling-policy.mjs",
+    "check:configuration": "node --test scripts/test-configure.mjs",
+    "verify": "npm run check:tooling && npm run check:configuration && npm run typecheck && npm run lint && npm run check:recovery-schemas && npm run check:core-planner && npm test && npm run test:runtime && npm run test:shared-read && npm run test:audited-import && npm run test:recovery && npm run test:primary && npm run test:domain && npm run test:core && npm run build && npm run typecheck:operator && npm run test:operator && npm run test:pipeline",
+    "db:local": "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",
+    "test:runtime": "node scripts/test-runtime.mjs",
+    "test:shared-read": "node scripts/test-shared-read-runtime.mjs",
+    "bindings": "wrangler types src/bindings.d.ts --env-interface CloudflareBindings",
+    "test:recovery": "node scripts/test-recovery-runtime.mjs",
+    "test:primary": "node scripts/test-primary-runtime.mjs",
+    "test:domain": "node scripts/test-domain-runtime.mjs",
+    "check:recovery-schemas": "node scripts/generate-recovery-schemas.mjs --check && node scripts/generate-shared-types.mjs --check",
+    "check:core-planner": "node scripts/generate-core-planner-identity.mjs --check",
+    "test:core": "node scripts/test-core-operation-runtime.mjs && node scripts/test-core-archive-source-runtime.mjs && node scripts/test-core-lifecycle-runtime.mjs",
+    "typecheck:strict": "tsc -p tsconfig.worker.json && tsc -p tsconfig.node-port.json && tsc -p tsconfig.dashboard.json",
+    "test:read-first": "vitest run tests/read-first-client.test.ts tests/read-first-navigation.test.ts tests/read-first-presentation.test.ts tests/read-first-effects.test.ts tests/audited-legacy-import.test.ts && node scripts/test-audited-import.mjs",
+    "test:audited-import": "node scripts/test-audited-import.mjs",
+    "test:operator": "node --test scripts/test-operator-broker.mjs && node --test scripts/test-operator-kernel-runtime.mjs && node --test scripts/test-operator-utf8-transport.mjs",
+    "typecheck:operator": "tsc -p tsconfig.operator.json && tsc -p tsconfig.operator-worker.json",
+    "test:pipeline": "node scripts/test-pipeline-contract.mjs && node scripts/test-pipeline-runtime.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "jose": "6.2.12",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261009.1",
+    "@types/node": "26.6.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.12.0",
+    "miniflare": "5.20261006.1-alpha",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.1",
+    "vite": "8.3.4",
+    "vitest": "5.0.3",
+    "wrangler": "4.149.0"
+  }
+}

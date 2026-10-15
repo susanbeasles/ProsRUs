@@ -1,0 +1,71 @@
+[
+  {
+    "table": "recovery_workspaces",
+    "setup": [],
+    "replace": "INSERT OR REPLACE INTO recovery_workspaces($ROWID,owner,workspace_id) VALUES($RID,'changed-owner','changed-workspace')"
+  },
+  {
+    "table": "recovery_transactions",
+    "setup": [],
+    "replace": "INSERT OR REPLACE INTO recovery_transactions($ROWID,owner,workspace_id,transaction_id,epoch_id,sequence,expected_sequence,previous_digest,transaction_digest,schema_version,request_key,request_digest,prepared) VALUES($RID,'owner','workspace','replacement','epoch','2','1','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',1,'replacement','cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc','{\"versions\":[],\"expectedHeads\":[]}')"
+  },
+  {
+    "table": "recovery_lineages",
+    "setup": [
+      "INSERT INTO recovery_lineages VALUES('owner','workspace','original','resume','original')"
+    ],
+    "replace": "INSERT OR REPLACE INTO recovery_lineages($ROWID,owner,workspace_id,lineage_id,kind,entity_id) VALUES($RID,'owner','workspace','replacement','resume','replacement')"
+  },
+  {
+    "table": "recovery_versions",
+    "setup": [
+      "INSERT INTO recovery_lineages VALUES('owner','workspace','original','resume','original')",
+      "INSERT INTO recovery_lineages VALUES('owner','workspace','replacement','resume','replacement')",
+      "INSERT INTO recovery_versions VALUES('owner','workspace','original','original','resume','original','transaction','epoch','1',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}')"
+    ],
+    "replace": "INSERT OR REPLACE INTO recovery_versions($ROWID,owner,workspace_id,version_id,lineage_id,kind,entity_id,transaction_id,epoch_id,sequence,schema_version,manifest_digest,manifest) VALUES($RID,'owner','workspace','replacement','replacement','resume','replacement','transaction','epoch','1',1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}')"
+  },
+  {
+    "table": "recovery_events",
+    "setup": [
+      "INSERT INTO recovery_events VALUES('owner','workspace','original','transaction','epoch','1',1,'approval','{}','{}')"
+    ],
+    "replace": "INSERT OR REPLACE INTO recovery_events($ROWID,owner,workspace_id,event_id,transaction_id,epoch_id,sequence,schema_version,kind,body,event) VALUES($RID,'owner','workspace','replacement','transaction','epoch','1',1,'approval','{}','{}')"
+  },
+  {
+    "table": "recovery_request_results",
+    "setup": [
+      "INSERT INTO recovery_request_results VALUES('owner','workspace','original',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','transaction','{}')"
+    ],
+    "replace": "INSERT OR REPLACE INTO recovery_request_results($ROWID,owner,workspace_id,request_key,schema_version,request_digest,transaction_id,result) VALUES($RID,'owner','workspace','replacement',1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','transaction','{}')"
+  },
+  {
+    "table": "recovery_audit",
+    "setup": [
+      "INSERT INTO recovery_audit VALUES('owner','workspace','original',1,'{}')"
+    ],
+    "replace": "INSERT OR REPLACE INTO recovery_audit($ROWID,owner,workspace_id,event_id,schema_version,event) VALUES($RID,'owner','workspace','replacement',1,'{}')"
+  },
+  {
+    "table": "recovery_job_history",
+    "setup": [
+      "INSERT INTO recovery_outbox(owner,workspace_id,job_id,transaction_id,next_attempt_at,created_at) VALUES('owner','workspace','job','transaction',1,1)",
+      "INSERT INTO recovery_job_history VALUES('owner','workspace','original','job',1,'{}')"
+    ],
+    "replace": "INSERT OR REPLACE INTO recovery_job_history($ROWID,owner,workspace_id,event_id,job_id,schema_version,result) VALUES($RID,'owner','workspace','replacement','job',1,'{}')"
+  },
+  {
+    "table": "recovery_protection_receipts",
+    "setup": [
+      "INSERT INTO recovery_protection_receipts VALUES('owner','workspace','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','transaction',1,'{}')"
+    ],
+    "replace": "INSERT OR REPLACE INTO recovery_protection_receipts($ROWID,owner,workspace_id,receipt_digest,transaction_id,schema_version,receipt) VALUES($RID,'owner','workspace','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','transaction',1,'{}')"
+  },
+  {
+    "table": "recovery_import_baselines",
+    "setup": [
+      "INSERT INTO recovery_import_baselines VALUES('owner','records','claim','original','1','{}','imported_legacy_baseline','not_applicable','pending',1)"
+    ],
+    "replace": "INSERT OR REPLACE INTO recovery_import_baselines($ROWID,owner,source_table,source_kind,source_id,source_revision,source_snapshot,provenance,artifact_availability,archive_state,schema_version) VALUES($RID,'owner','records','claim','replacement','1','{}','imported_legacy_baseline','not_applicable','pending',1)"
+  }
+]
