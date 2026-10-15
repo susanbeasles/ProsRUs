@@ -14,7 +14,7 @@ import { createRecordReads } from "../application/record-reads";
 import { executeCommand } from "../application/commands/execute";
 import { createSerialQueue } from "../application/commands/serial";
 import { createRecoveryIntakeBudget } from "../application/recovery-admission";
-import { createPrimaryArchive } from "../storage/primary-archive";
+import { createRoutedArchive } from "../storage/routed-archive";
 import { restoredVersionResolver } from "../storage/restored-objects";
 import { readRecoveryStatus } from "../application/recovery-status";
 function unavailable(): never {
@@ -42,8 +42,8 @@ export class Coordinator extends DurableObject<Environment> {
           request,
           {
             db: this.env.DB,
-            archive: createPrimaryArchive(
-              this.env.ARTIFACTS,
+            archive: createRoutedArchive(
+              { originals: this.env.ORIGINALS, uploads: this.env.UPLOADS },
               restoredVersionResolver(this.env.DB),
             ),
             authority: this.env.CONTROL_AUTHORITY,

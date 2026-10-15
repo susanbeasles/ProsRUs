@@ -12,7 +12,8 @@ const outputs = {
   environment: { value: "staging" },
   account_id: { value: "a".repeat(32) },
   database_id: { value: "11111111-2222-4333-8444-555555555555" },
-  bucket_name: { value: "job-stack-staging" },
+  originals_bucket_name: { value: "job-stack-staging-originals" },
+  uploads_bucket_name: { value: "job-stack-staging-uploads" },
   queue_name: { value: "job-stack-staging" },
 };
 
@@ -42,6 +43,7 @@ test("configures reviewed resource references while preserving disabled consumer
   assert.equal(generated.preview_urls, false);
   assert.deepEqual(generated.migrations, baseline.migrations);
   assert.equal(generated.vars.OWNER_ID, "synthetic_owner");
+  assert.deepEqual(generated.r2_buckets.map(b => [b.binding, b.bucket_name]).sort(), [["ORIGINALS", "job-stack-staging-originals"], ["UPLOADS", "job-stack-staging-uploads"]]);
   assert.match(result.stdout, /not deployed/i);
 });
 
@@ -56,7 +58,8 @@ test("rejects malformed resource identity before generating configuration", asyn
   for (const [key, value] of [
     ["account_id", ""], ["account_id", "https://arbitrary.invalid"],
     ["database_id", "0".repeat(36)], ["database_id", "00000000-0000-0000-0000-000000000000"],
-    ["bucket_name", null], ["queue_name", "foreign-queue"],
+    ["originals_bucket_name", null], ["uploads_bucket_name", "job-stack-staging-backup"],
+    ["originals_bucket_name", "job-stack-staging-backup"], ["queue_name", "foreign-queue"],
   ]) {
     const { result, generated } = await run(t, { ...outputs, [key]: { value } });
     assert.notEqual(result.status, 0, key);
@@ -69,6 +72,7 @@ test("does not turn altered ingress or consumer configuration into an approved r
     { workers_dev: true }, { preview_urls: true },
     { triggers: { crons: ["* * * * *"] } },
     { queues: { ...baseline.queues, consumers: [{ queue: "job-stack-staging" }] } },
+    { r2_buckets: [...baseline.r2_buckets, { binding: "BACKUP", bucket_name: "job-stack-staging-backup" }] },
   ]) {
     const { result, generated } = await run(t, outputs, { ...baseline, ...change });
     assert.notEqual(result.status, 0);

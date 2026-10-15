@@ -116,7 +116,8 @@ export default {
         return Response.json({ ok: true });
       }
       if (path === "/list") {
-        const bucket = (body.bucket === "BACKUP" ? env.BACKUP : body.bucket === "ORIGINALS" ? env.ORIGINALS : target(env, String(body.bucket)).originals);
+        const named: Record<string, R2Bucket | undefined> = { BACKUP: env.BACKUP, ORIGINALS: env.ORIGINALS, UPLOADS: env.UPLOADS as R2Bucket | undefined };
+        const bucket = named[String(body.bucket)] ?? target(env, String(body.bucket)).originals;
         const keys: string[] = [];
         let cursor: string | undefined;
         do {

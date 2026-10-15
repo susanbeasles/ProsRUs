@@ -19,7 +19,8 @@ const name = `job-stack-${environment}`;
 const accountId = value("account_id"), databaseId = value("database_id");
 if (typeof accountId !== "string" || !/^[a-f0-9]{32}$/.test(accountId)
     || typeof databaseId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(databaseId)
-    || value("bucket_name") !== name || value("queue_name") !== name)
+    || value("originals_bucket_name") !== `${name}-originals` || value("uploads_bucket_name") !== `${name}-uploads`
+    || value("queue_name") !== name)
   throw Error("Invalid or mismatched Terraform resource references");
 
 const config = readJson("wrangler.jsonc");
@@ -29,7 +30,8 @@ if (config.main !== "src/worker.ts" || config.workers_dev !== false || config.pr
     || !Array.isArray(config.queues?.consumers) || config.queues.consumers.length !== 0
     || !Array.isArray(config.triggers?.crons) || config.triggers.crons.length !== 0
     || config.d1_databases?.length !== 1 || config.d1_databases[0].binding !== "DB"
-    || config.r2_buckets?.length !== 1 || config.r2_buckets[0].binding !== "ARTIFACTS"
+    // The product never binds the backup bucket; only the replicator does (ADR 0004).
+    || config.r2_buckets?.length !== 2 || config.r2_buckets.map(bucket => bucket.binding).sort().join() !== "ORIGINALS,UPLOADS"
     || config.queues.producers?.length !== 1 || config.queues.producers[0].binding !== "JOBS"
     || !config.vars || typeof config.vars !== "object")
   throw Error("Expected the reviewed private, read-only source configuration");
@@ -40,7 +42,8 @@ config.vars.OWNER_ID = ownerId;
 config.vars.GOOGLE_CLIENT_ID = googleClientId;
 config.d1_databases[0].database_id = databaseId;
 config.d1_databases[0].database_name = name;
-config.r2_buckets[0].bucket_name = value("bucket_name");
+for (const bucket of config.r2_buckets)
+  bucket.bucket_name = value(bucket.binding === "ORIGINALS" ? "originals_bucket_name" : "uploads_bucket_name");
 config.queues.producers[0].queue = value("queue_name");
 writeFileSync(`wrangler.${environment}.json`, JSON.stringify(config, null, 2) + "\n");
 console.log(`Wrote wrangler.${environment}.json for review; not deployed or authorized. The existing Control authority binding and private configuration still require qualification.`);

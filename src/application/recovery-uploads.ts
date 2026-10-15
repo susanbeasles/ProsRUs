@@ -241,7 +241,8 @@ export function createUploadIntake(ports: UploadPorts) {
         const digest = artifactDigest(bytes);
         await current(context, "chunk", session);
         const stored = await archive.putImmutable({
-          object: logicalObject(session.namespace, `blobs/${digest}`),
+          // Chunks are temporary: they stay under the session prefix in UPLOADS.
+          object: logicalObject(session.namespace, `${uploadPrefix(session)}/chunks/${digest}`),
           bytes,
           digest,
           hashPurpose: "blob",

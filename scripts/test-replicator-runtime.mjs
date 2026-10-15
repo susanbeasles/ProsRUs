@@ -49,13 +49,13 @@ const mf = new Miniflare(convertV4MiniflareOptions({
   cf: false, host: "127.0.0.1", outboundService: denyOutbound,
   workers: [
     { ...common, name: "client", script: clientScript, serviceBindings: { PRODUCT: { name: "product", entrypoint: "JobStack" } } },
-    { ...common, name: "product", script: productScript, d1Databases: { DB: "primary" }, r2Buckets: { ARTIFACTS: "originals" },
+    { ...common, name: "product", script: productScript, d1Databases: { DB: "primary" }, r2Buckets: { ORIGINALS: "originals", UPLOADS: "uploads" },
       durableObjects: { COORDINATOR: { className: "Coordinator", useSQLite: true } }, bindings: { RECOVERY_TRUST_ROOT: trustRoot },
       serviceBindings: { CONTROL_AUTHORITY: { name: "authority", entrypoint: "FixtureAuthority" }, ASSETS: denyOutbound } },
     { ...common, name: "authority", script: authorityScript, bindings: { SIGNING_JWK: JSON.stringify(await exportJWK(controlKeys.privateKey)) } },
     { ...common, name: "replicator", script: harnessScript,
       d1Databases: { DB: "primary", ...Object.fromEntries(TARGETS.map((t) => [`RESTORE_DB_${t}`, `restore-${t}`])) },
-      r2Buckets: { ORIGINALS: "originals", BACKUP: "backup", ...Object.fromEntries(TARGETS.map((t) => [`RESTORE_ORIGINALS_${t}`, `restore-originals-${t}`])) },
+      r2Buckets: { ORIGINALS: "originals", UPLOADS: "uploads", BACKUP: "backup", ...Object.fromEntries(TARGETS.map((t) => [`RESTORE_ORIGINALS_${t}`, `restore-originals-${t}`])) },
       bindings: { OWNER_ID: "owner_fixture", RECEIPT_KEY: receiptKey } },
   ],
 }));
@@ -199,6 +199,8 @@ try {
     await rows(db, "SELECT transaction_id,sequence,transaction_digest,previous_digest FROM recovery_transactions ORDER BY length(sequence),sequence"));
   assert.deepEqual(await call("/read-restored", { target: "A", descriptor: blob }), { verified: true });
   assert.equal((await keys("A", `${blob.object.namespace}/uploads/`)).length, 0, "temporary upload sessions are never restored");
+  assert.equal((await keys("ORIGINALS", `${blob.object.namespace}/uploads/`)).length, 0, "upload state never enters the retained originals bucket");
+  assert.ok((await keys("UPLOADS", `${blob.object.namespace}/uploads/`)).some((key) => key.includes(interrupted.uploadHandle)), "the interrupted session stays in the uploads bucket");
   assert.ok(restored.files.count >= 2);
   pass("after deleting a primary file, restore rebuilds DB + files consistently in a new database: rows match, the pinned original verifies through its alias, no upload residue");
 
@@ -236,7 +238,9 @@ try {
   pass("after a failed migration, restore yields the consistent state at the last compatible change, applies only provided migrations, and the corrected migration then applies cleanly");
 
   // --- Integrity: a corrupted backup object is detected, never silently restored.
-  const objectKey = (await keys("BACKUP", "objects/sha256/"))[0];
+  const uploadedSha = createHash("sha256").update("hello recovery").digest("hex");
+  const objectKey = `objects/sha256/${uploadedSha.slice(0, 2)}/${uploadedSha}`;
+  assert.ok((await keys("BACKUP", "objects/sha256/")).includes(objectKey));
   await call("/overwrite-backup", { key: objectKey, text: "corrupted" });
   await assert.rejects(call("/restore", { target: "E", workspaceId: WORKSPACE, targetSequence: null, restoreId: "restore-e", trust: true }));
   const monthly = await call("/checkpoint", { kind: "monthly" });

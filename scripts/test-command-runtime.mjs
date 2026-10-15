@@ -56,7 +56,7 @@ const mf = new Miniflare(convertV4MiniflareOptions({
   cf: false, host: "127.0.0.1", outboundService: denyOutbound,
   workers: [
     { ...common, name: "client", script: clientScript, serviceBindings: { PRODUCT: { name: "product", entrypoint: "JobStack" } } },
-    { ...common, name: "product", script: productScript, d1Databases: { DB: "synthetic" }, r2Buckets: { ARTIFACTS: "synthetic-artifacts" },
+    { ...common, name: "product", script: productScript, d1Databases: { DB: "synthetic" }, r2Buckets: { ORIGINALS: "synthetic-originals", UPLOADS: "synthetic-uploads" },
       durableObjects: { COORDINATOR: { className: "Coordinator", useSQLite: true } },
       bindings: { RECOVERY_TRUST_ROOT: trustRoot },
       serviceBindings: { CONTROL_AUTHORITY: { name: "authority", entrypoint: "FixtureAuthority" }, ASSETS: denyOutbound } },
