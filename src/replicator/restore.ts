@@ -28,6 +28,13 @@ import { readStreamChunks } from "../storage/recovery-streams";
 /** D1 binds at most 100 parameters per statement. */
 const MAX_BOUND_PARAMETERS = 100;
 const STATEMENTS_PER_BATCH = 50;
+/** Ledger tables are tooling, excluded from the schema fingerprint. The
+ * d1_migrations shape is the one wrangler creates. */
+const LEDGER_DDL = {
+  d1_migrations:
+    "CREATE TABLE IF NOT EXISTS d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)",
+  runtime_migrations: "CREATE TABLE IF NOT EXISTS runtime_migrations(name TEXT PRIMARY KEY)",
+} as const;
 
 export type RestoreMigration = Readonly<{ name: string; sql: readonly string[] }>;
 export type RestoreInput = Readonly<{
@@ -231,11 +238,12 @@ async function migrateTo(input: RestoreInput, fingerprint: string, applied: stri
   for (const migration of input.migrations) {
     if ((await readSchemaIdentity(input.target.db)).fingerprint === fingerprint) return true;
     if (done.has(migration.name)) continue;
-    await input.target.db.batch(migration.sql.map((statement) => input.target.db.prepare(statement)));
-    if (input.migrationLedger === "runtime_migrations")
-      await input.target.db.prepare("INSERT INTO runtime_migrations(name) VALUES(?)").bind(migration.name).run();
-    else
-      await input.target.db.prepare("INSERT INTO d1_migrations(name) VALUES(?)").bind(migration.name).run();
+    await input.target.db.prepare(LEDGER_DDL[input.migrationLedger]).run();
+    // The migration and its ledger row commit together or not at all.
+    await input.target.db.batch([
+      ...migration.sql.map((statement) => input.target.db.prepare(statement)),
+      input.target.db.prepare(`INSERT INTO "${input.migrationLedger}"(name) VALUES(?)`).bind(migration.name),
+    ]);
     done.add(migration.name);
     applied.push(migration.name);
   }

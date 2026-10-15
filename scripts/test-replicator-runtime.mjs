@@ -14,6 +14,7 @@ const bundle = async (options) =>
     external: ["cloudflare:workers", "node:*"], ...options })).outputFiles[0].text;
 const productScript = await bundle({ stdin: { contents: "export {default,JobStack,Coordinator} from './src/worker';", resolveDir: process.cwd() } });
 const harnessScript = await bundle({ entryPoints: ["scripts/replicator-harness-worker.ts"] });
+const restoreEntryScript = await bundle({ entryPoints: ["src/replicator/restore-entry.ts"] });
 const authorityScript = await bundle({ stdin: { resolveDir: process.cwd(), contents: `
   import {WorkerEntrypoint} from 'cloudflare:workers';
   import {syntheticControl} from './tests/fixtures/command-control';
@@ -39,6 +40,9 @@ const trustRoot = JSON.stringify({ format: "recovery-trust-root-v1", keyId: "syn
   publicJwk: { kty: controlPublic.kty, crv: controlPublic.crv, x: controlPublic.x, y: controlPublic.y } });
 const receiptKeys = await generateKeyPair("ES256", { extractable: true });
 const receiptJwk = await exportJWK(receiptKeys.privateKey);
+const receiptPublic = await exportJWK(receiptKeys.publicKey);
+const receiptTrustRoot = JSON.stringify({ format: "recovery-trust-root-v1", keyId: "synthetic-replicator", algorithm: "ES256",
+  publicJwk: { kty: receiptPublic.kty, crv: receiptPublic.crv, x: receiptPublic.x, y: receiptPublic.y } });
 const receiptKey = JSON.stringify({ format: "recovery-signing-key-v1", keyId: "synthetic-replicator", algorithm: "ES256",
   privateJwk: { kty: receiptJwk.kty, crv: receiptJwk.crv, x: receiptJwk.x, y: receiptJwk.y, d: receiptJwk.d } });
 
@@ -57,6 +61,11 @@ const mf = new Miniflare(convertV4MiniflareOptions({
       d1Databases: { DB: "primary", ...Object.fromEntries(TARGETS.map((t) => [`RESTORE_DB_${t}`, `restore-${t}`])) },
       r2Buckets: { ORIGINALS: "originals", UPLOADS: "uploads", BACKUP: "backup", ...Object.fromEntries(TARGETS.map((t) => [`RESTORE_ORIGINALS_${t}`, `restore-originals-${t}`])) },
       bindings: { OWNER_ID: "owner_fixture", RECEIPT_KEY: receiptKey } },
+    { ...common, name: "restore-operator", script: restoreEntryScript, d1Databases: { TARGET_DB: "restore-F" },
+      r2Buckets: { BACKUP: "backup", TARGET_ORIGINALS: "restore-originals-F" },
+      bindings: { RESTORE_MODE: "operator-local", OWNER_ID: "owner_fixture", RECEIPT_TRUST_ROOT: receiptTrustRoot } },
+    { ...common, name: "restore-disabled", script: restoreEntryScript, d1Databases: { TARGET_DB: "restore-G" },
+      r2Buckets: { BACKUP: "backup", TARGET_ORIGINALS: "restore-originals-G" }, bindings: { OWNER_ID: "owner_fixture" } },
   ],
 }));
 
@@ -236,6 +245,18 @@ try {
   const withoutMigration = await call("/restore", { target: "D", workspaceId: WORKSPACE, targetSequence: null, restoreId: "restore-d", trust: true });
   assert.deepEqual([withoutMigration.outcome, withoutMigration.restoredThrough.sequence, withoutMigration.stoppedAt?.reason], ["partial", "5", "schema_migration_required"]);
   pass("after a failed migration, restore yields the consistent state at the last compatible change, applies only provided migrations, and the corrected migration then applies cleanly");
+
+  // --- The operator entry: loopback only, explicit mode only, same restore code.
+  const operator = await mf.getWorker("restore-operator");
+  const restoreRequest = { workspaceId: WORKSPACE, restoreId: "restore-f", targetSequence: null, migrations: [good], requireSignedCheckpoint: true };
+  const post = (worker, url) => worker.fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(restoreRequest) });
+  assert.equal((await post(operator, "https://job-stack.example.com/restore")).status, 404);
+  assert.equal((await post(await mf.getWorker("restore-disabled"), "http://127.0.0.1/restore")).status, 404);
+  const operatorResponse = await post(operator, "http://127.0.0.1/restore");
+  const operatorReport = await operatorResponse.json();
+  assert.equal(operatorResponse.status, 200, JSON.stringify(operatorReport));
+  assert.deepEqual([operatorReport.checkpoint.signed, operatorReport.restoredThrough.sequence, operatorReport.stoppedAt?.reason], [true, "6", "schema_migration_required"]);
+  pass("the operator restore entry answers only loopback requests in explicit operator mode, requires a signed checkpoint, and runs the same restore");
 
   // --- Integrity: a corrupted backup object is detected, never silently restored.
   const uploadedSha = createHash("sha256").update("hello recovery").digest("hex");

@@ -1,0 +1,18 @@
+// Operator restore template (docs/recovery-backup.md). Copy to an untracked
+// wrangler.restore.jsonc, fill the NEW target ids created by the root
+// provisioning path, and run `npx wrangler dev -c wrangler.restore.jsonc`.
+// Never deploy this Worker. BACKUP is read here only through the restore code.
+{
+ "$schema":"node_modules/wrangler/config-schema.json",
+ "name":"job-stack-restore-operator",
+ "main":"src/replicator/restore-entry.ts",
+ "compatibility_date":"2026-10-08",
+ "compatibility_flags":["nodejs_compat"],
+ "workers_dev":false,"preview_urls":false,
+ "vars":{"RESTORE_MODE":"operator-local","OWNER_ID":"UNCONFIGURED","RECEIPT_TRUST_ROOT":""},
+ "d1_databases":[{"binding":"TARGET_DB","database_name":"job-stack-<env>-restore-<id>","database_id":"00000000-0000-0000-0000-000000000000","remote":true}],
+ "r2_buckets":[
+  {"binding":"BACKUP","bucket_name":"job-stack-<env>-backup","remote":true},
+  {"binding":"TARGET_ORIGINALS","bucket_name":"job-stack-<env>-originals-restore-<id>","remote":true}
+ ]
+}
