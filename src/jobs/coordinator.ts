@@ -16,6 +16,7 @@ import { createSerialQueue } from "../application/commands/serial";
 import { createRecoveryIntakeBudget } from "../application/recovery-admission";
 import { createPrimaryArchive } from "../storage/primary-archive";
 import { restoredVersionResolver } from "../storage/restored-objects";
+import { readRecoveryStatus } from "../application/recovery-status";
 function unavailable(): never {
   throw Error("operation-unavailable");
 }
@@ -88,6 +89,9 @@ export class Coordinator extends DurableObject<Environment> {
         break;
       case "job-stack.protection.read.v1":
         output = await reads.protection(request.input.versionId);
+        break;
+      case "job-stack.recovery.status.read.v1":
+        output = await readRecoveryStatus(this.env.DB, ownerId, workspaceId, Date.now());
         break;
       default:
         return unavailable();

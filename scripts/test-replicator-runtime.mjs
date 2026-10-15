@@ -158,7 +158,9 @@ try {
   assert.equal(report.latestCheckpoint.position.sequence, "3");
   assert.equal(report.state, "protected");
   assert.equal((await status(27 * HOUR)).state, "degraded", "protection expires when the checkpoint ages past 26h");
-  pass("protected only when every committed transaction is verified and a verified checkpoint is under 26h old");
+  const viaProduct = await invoke("job-stack.recovery.status.read.v1", {});
+  assert.deepEqual({ ...viaProduct, observedAt: 0, lag: { ...viaProduct.lag } }, { ...report, observedAt: 0, lag: { ...report.lag } });
+  pass("protected only when every committed transaction is verified and a verified checkpoint is under 26h old; job_stack_recovery_status returns the same through the product");
 
   // --- Duplicate delivery: crash after put (no custody), then a re-run.
   await invoke("job-stack.opportunity.capture.v1", { requestKey: "capture-4", body: { ...capture, role: "Principal Engineer", sourceUrl: "https://example.com/jobs/4" } });
@@ -260,6 +262,7 @@ try {
   report = await status();
   assert.equal(report.state, "failed");
   assert.equal(report.deadLetters, 1);
+  assert.equal((await invoke("job-stack.recovery.status.read.v1", {})).state, "failed");
   pass("a primary object missing at replication quarantines the job and the status is failed");
   console.log(`replicator runtime: ${checks} checks passed`);
 } finally {

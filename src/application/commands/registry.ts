@@ -30,6 +30,7 @@ export type CommandOperationId = Exclude<
   | "job-stack.version.list.v1"
   | "job-stack.request.read.v1"
   | "job-stack.protection.read.v1"
+  | "job-stack.recovery.status.read.v1"
   | "job-stack.artifact.read.v1"
 >;
 const available = (kind: CommandKind): CommandAvailability =>
