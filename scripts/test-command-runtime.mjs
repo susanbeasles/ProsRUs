@@ -62,7 +62,7 @@ const mf = new Miniflare(convertV4MiniflareOptions({
       serviceBindings: { CONTROL_AUTHORITY: { name: "authority", entrypoint: "FixtureAuthority" }, ASSETS: denyOutbound } },
     // Same product bundle with the builder-injected RELEASE_MARKER present / malformed.
     { ...common, name: "released", script: productScript, bindings: { RELEASE_MARKER: releasedMarker } },
-    { ...common, name: "malformed", script: productScript, bindings: { RELEASE_MARKER: releasedMarker.replace("{", "{ ") } },
+    { ...common, name: "malformed", script: productScript, bindings: { RELEASE_MARKER: releasedMarker.replace(/^\{/, "{ ") } },
     { ...common, name: "authority", script: authorityScript,
       bindings: { SIGNING_JWK: JSON.stringify(await exportJWK(keys.privateKey)) } },
   ],
