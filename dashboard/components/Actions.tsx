@@ -1,6 +1,6 @@
-import { useState, type ComponentType, type ReactNode } from "react";
+import { useId, useState, type ComponentType, type ReactNode } from "react";
 import { domainBodySchemas } from "../../integration/shared-contract.mjs";
-import { ApiError, ELEVATION_URL, needsElevation, writeOperation, type WriteOperation } from "../lib/api";
+import { ApiError, ELEVATION_URL, INTENTIONALLY_UNAVAILABLE, needsElevation, writeOperation, type WriteOperation } from "../lib/api";
 import { useEntityMutations, useIntent, useMutationRecords, useWorkspace } from "../lib/hooks";
 import type { MutationRecord, MutationSpec } from "../lib/mutations";
 import type { FieldErrors, Overrides } from "../lib/schemaForm";
@@ -22,6 +22,8 @@ function serverUnavailable(record: MutationRecord): boolean {
 export function useWriteAvailability(operation: WriteOperation): Availability {
   const workspace = useWorkspace();
   const records = useMutationRecords();
+  const intentionally = INTENTIONALLY_UNAVAILABLE[operation];
+  if (intentionally) return { available: false, reason: intentionally };
   const meta = writeOperation(operation);
   if (!meta) return { available: false, reason: "This operation is not part of the shared catalog." };
   if (!workspace.workspaceId) return { available: false, reason: "The current session does not identify a workspace." };
@@ -45,13 +47,25 @@ export function OwnerOnlyBadge({ operation }: { operation: WriteOperation }) {
   );
 }
 
-export function Unavailable({ label, reason }: { label: string; reason: string }) {
+/**
+ * A disabled action that stays focusable (aria-disabled) and is described by its reason, so keyboard
+ * and screen-reader users learn why it cannot run. Activating it does nothing.
+ */
+export function DisabledAction({ label, reason }: { label: string; reason: string }) {
+  const id = useId();
   return (
-    <p className="action-unavailable" role="note">
-      <strong>{label}</strong> is not available: {reason}
-    </p>
+    <span className="disabled-action">
+      <button type="button" aria-disabled="true" aria-describedby={id} onClick={(event) => event.preventDefault()}>
+        {label}
+      </button>
+      <span id={id} className="action-unavailable" role="note">
+        {label} is not available: {reason}
+      </span>
+    </span>
   );
 }
+
+export const Unavailable = DisabledAction;
 
 /**
  * A write behind a button: availability is explained instead of hidden, the dialog is generated from
@@ -140,6 +154,9 @@ export function PendingChanges({ entity }: { entity: string }) {
               <span className="muted"> · revision {record.result.revision}, primary save {record.result.save.status.replaceAll("_", " ")}, protection pending</span>
             )}
             {record.status === "error" && <span className="muted"> · {errorMessage(record.error)}</span>}
+            {record.status === "error" && needsElevation(record.error) && (
+              <a href={ELEVATION_URL}>Confirm with your security key in Personal Control</a>
+            )}
             {record.status === "cancelled" && record.cancelReason && <span className="muted"> · {record.cancelReason}</span>}
             {record.status === "error" && record.retryable && (
               <button type="button" onClick={() => workspace.mutations.retry(record.id)}>

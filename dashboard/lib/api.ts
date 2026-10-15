@@ -201,6 +201,15 @@ export const WRITE_OPERATIONS = [
   "job_stack_update_settings",
 ] as const;
 export type WriteOperation = (typeof WRITE_OPERATIONS)[number];
+
+/**
+ * Catalog writes the backend intentionally does not serve yet. They are refused before any request
+ * and rendered as disabled actions with these reasons; success is never simulated.
+ */
+export const INTENTIONALLY_UNAVAILABLE: Readonly<Partial<Record<WriteOperation, string>>> = {
+  job_stack_create_packet: "Creating packets is not enabled on the server yet. Nothing is created or sent.",
+  job_stack_record_submission: "Recording submissions is not enabled on the server yet. Nothing is recorded.",
+};
 export type DomainWriteOutput = OutputById["job-stack.opportunity.transition.v1"];
 export type WriteInput = { workspaceId: string; requestKey: string; body: unknown };
 
@@ -209,6 +218,7 @@ const REQUEST_KEY = /^[A-Za-z0-9_-]{1,100}$/;
 /** Catalog metadata for a dashboard write; null for anything that is not an enabled domain write. */
 export function writeOperation(name: string) {
   if (!(WRITE_OPERATIONS as readonly string[]).includes(name)) return null;
+  if (Object.hasOwn(INTENTIONALLY_UNAVAILABLE, name)) return null;
   const operation = operationByName(name);
   if (!operation || operation.effect !== "local-write" || !operation.domainOperation) return null;
   return operation;

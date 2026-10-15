@@ -1,4 +1,4 @@
-import { PendingChanges, WriteAction } from "../../components/Actions";
+import { DisabledAction, PendingChanges, WriteAction } from "../../components/Actions";
 import { CardsSkeleton, EmptyState, NotEnabled, Skeleton } from "../../components/Feedback";
 import { BackLink, DetailHeading, PageHeader, ViewTabs } from "../../components/Layout";
 import { QueryView } from "../../components/QueryView";
@@ -32,7 +32,16 @@ export default function InterviewsPage() {
   if (route.record) return prep ? <PrepDetail entityId={route.record} /> : <InterviewDetail entityId={route.record} />;
   return (
     <>
-      <PageHeader eyebrow="INTERVIEWS" title="Interviews">
+      <PageHeader
+        eyebrow="INTERVIEWS"
+        title="Interviews"
+        actions={
+          <>
+            <DisabledAction label="Schedule interview" reason="scheduling is an external calendar effect that is not enabled." />
+            <DisabledAction label="Import meeting notes" reason="meeting import is not enabled on the server yet. Nothing is uploaded." />
+          </>
+        }
+      >
         <p>Interviews recorded in this workspace and the preparation sheets built from your records.</p>
       </PageHeader>
       <ViewTabs label="Interview views" labels={{ interviews: "Interviews", prep: "Preparation" }} />
@@ -114,6 +123,7 @@ function InterviewDetail({ entityId }: { entityId: string }) {
                   spec={prepareSpec}
                   submitLabel="Build sheet"
                 />
+                <DisabledAction label="Reschedule or cancel" reason="calendar and email changes are external effects that are not enabled." />
               </div>
             )}
             <SchedulingNotEnabled />

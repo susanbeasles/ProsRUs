@@ -1,4 +1,4 @@
-import { PendingChanges, Unavailable, WriteAction } from "../../components/Actions";
+import { DisabledAction, PendingChanges, Unavailable, WriteAction } from "../../components/Actions";
 import { CardsSkeleton, EmptyState, NotEnabled, Skeleton } from "../../components/Feedback";
 import { BackLink, DetailHeading, PageHeader, ViewTabs } from "../../components/Layout";
 import { QueryView } from "../../components/QueryView";
@@ -41,9 +41,10 @@ export default function ProfileEvidencePage() {
       <ViewTabs label="Profile views" labels={{ claims: "Claims", profile: "Profile records", conflicts: "Conflicts" }} />
       {route.view === "profile" ? <ProfileList /> : route.view === "conflicts" ? <ConflictList /> : <ClaimList />}
       <NotEnabled title="Profile export">
-        Export is not enabled in this dashboard. It requires a reviewed profile change set and the private-export path, which this
-        dashboard does not invoke.
+        Export is not enabled. The server does not serve profile export yet, and it requires a reviewed profile change set and the
+        private-export path. Nothing is exported from this dashboard.
       </NotEnabled>
+      <DisabledAction label="Export profile" reason="profile export is not enabled on the server yet." />
     </>
   );
 }

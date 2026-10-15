@@ -316,6 +316,8 @@ describe("mutate transport (Control write contract)", () => {
     vi.stubGlobal("fetch", fetcher);
     await expect(mutate("job_stack_records", input, { grantId: "g" })).rejects.toThrow("unavailable");
     await expect(mutate("job_stack_send_reply", input, { grantId: "g" })).rejects.toThrow("unavailable");
+    for (const name of ["job_stack_create_packet", "job_stack_record_submission", "job_stack_import_meeting", "job_stack_export_profile"])
+      await expect(mutate(name, input, { grantId: "g" })).rejects.toMatchObject({ code: "operation-unavailable" });
     await expect(mutate("job_stack_prepare_interview", { ...input, requestKey: "" }, { grantId: "g" })).rejects.toMatchObject({ code: "request-key-required" });
     await expect(mutate("job_stack_prepare_interview", { ...input, body: { interviewId: "i", extra: true } }, { grantId: "g" })).rejects.toMatchObject({ code: "invalid-input" });
     // Schema-valid (20 000 characters per field) but 80 000 UTF-8 bytes: over Control's 64 KiB body limit.

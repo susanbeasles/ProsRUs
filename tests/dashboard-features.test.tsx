@@ -103,6 +103,12 @@ async function waitFor(check: () => boolean, timeout = 4000) {
 }
 const text = () => document.body.textContent ?? "";
 const notEnabled = (title: string) => document.querySelector(`[role="note"][aria-label="${title} (not enabled)"]`);
+/** A focusable, aria-disabled button whose description states why it cannot run. */
+function disabledAction(label: string): string | null {
+  const button = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === label);
+  if (!button || button.getAttribute("aria-disabled") !== "true") return null;
+  return document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent ?? null;
+}
 
 describe("feature pages", () => {
   it("overview shows first-page counts, recent records and an explicit backup-status state", async () => {
@@ -136,20 +142,22 @@ describe("feature pages", () => {
     await waitFor(() => text().includes("No interviews recorded"));
   });
 
-  it("conversations explain that sending is not enabled instead of offering a send button", async () => {
+  it("conversations explain that sending is not enabled with a disabled, described send action", async () => {
     const thread = row("thread", "thread_1", { subject: "Hello", recipient: "r@example.org", draft: "Draft text" });
     await mount("?grant=g&page=conversations&record=thread_1", { records: { "thread:thread_1": thread } });
     await waitFor(() => text().includes("Hello"));
     expect(notEnabled("Sending replies")).not.toBeNull();
     expect(text()).toContain("The shared catalog has no send operation");
-    expect([...document.querySelectorAll("button")].some((b) => /send/i.test(b.textContent ?? ""))).toBe(false);
+    expect(disabledAction("Send reply")).toContain("sending is an external effect that is not enabled");
+    expect([...document.querySelectorAll("button")].filter((b) => /send/i.test(b.textContent ?? "") && b.getAttribute("aria-disabled") !== "true")).toEqual([]);
     expect(text()).toContain("Save draft reply");
   });
 
   it("interviews explain that scheduling is not enabled", async () => {
     await mount("?grant=g&page=interviews");
     await waitFor(() => !!notEnabled("Scheduling, rescheduling and cancelling interviews"));
-    expect([...document.querySelectorAll("button")].some((b) => /schedule/i.test(b.textContent ?? ""))).toBe(false);
+    expect(disabledAction("Schedule interview")).toContain("not enabled");
+    expect(disabledAction("Import meeting notes")).toContain("meeting import is not enabled on the server yet");
   });
 
   it("profile, activity and history state what is not enabled", async () => {
@@ -165,11 +173,38 @@ describe("feature pages", () => {
     await waitFor(() => text().includes("does not include job-stack.protection.read"));
   });
 
-  it("explains a missing grant scope instead of rendering a failing button", async () => {
-    await mount("?grant=g&page=profile", { scopes: ["job-stack.records.read"] });
+  it("explains a missing grant scope with a disabled action instead of a failing button", async () => {
+    await mount("?grant=g&page=profile", { scopes: ["job-stack.records.read"] }, async () => {
+      throw Error("must not write");
+    });
     await waitFor(() => text().includes("Add claim is not available"));
-    expect(text()).toContain("This grant does not include job-stack.claim.add.");
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Add claim"))).toBe(false);
+    expect(disabledAction("Add claim")).toContain("This grant does not include job-stack.claim.add.");
+    expect(disabledAction("Export profile")).toContain("profile export is not enabled on the server yet");
+    const add = [...document.querySelectorAll("button")].find((b) => b.textContent === "Add claim") as HTMLButtonElement;
+    await act(async () => add.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("renders intentionally unavailable packet writes as disabled with a reason and never writes", async () => {
+    let writes = 0;
+    const packet = row("packet", "packet_1", { opportunityId: "opp_1", role: "Engineer" });
+    await mount("?grant=g&page=packets&record=packet_1", { records: { "packet:packet_1": packet } }, async () => {
+      writes++;
+      throw Error("must not write");
+    });
+    await waitFor(() => text().includes("Record submission is not available"));
+    expect(disabledAction("Record submission")).toContain("Recording submissions is not enabled on the server yet. Nothing is recorded.");
+    for (const unmount of unmounts.splice(0)) unmount();
+    await mount("?grant=g&page=packets", {}, async () => {
+      writes++;
+      throw Error("must not write");
+    });
+    await waitFor(() => text().includes("Create packet is not available"));
+    expect(disabledAction("Create packet")).toContain("Creating packets is not enabled on the server yet. Nothing is created or sent.");
+    const create = [...document.querySelectorAll("button")].find((b) => b.textContent === "Create packet") as HTMLButtonElement;
+    await act(async () => create.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(writes).toBe(0);
   });
 
   it("marks owner-only actions", async () => {

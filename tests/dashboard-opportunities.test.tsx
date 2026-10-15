@@ -211,6 +211,53 @@ describe("opportunity detail writes", () => {
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("refetches the record after a request-key conflict and shows the conflict", async () => {
+    const server: Server = { records: new Map([["opp_1", opportunity("opp_1", "qualified", "3")]]), reads: [] };
+    await mount("?grant=g&record=opp_1", server, async () => {
+      throw new ApiError("This request key was already used for a different change. Start the action again.", 409, "request-key-conflict");
+    });
+    await openTransition();
+    await type(control("New state"), "researching");
+    await type(control("Evidence for this change"), "Recheck");
+    server.records.set("opp_1", opportunity("opp_1", "blocked", "5"));
+    const before = server.reads.filter((r) => r === "detail:opp_1").length;
+    await submit();
+    await waitFor(() => text().includes("already used for a different change"));
+    await waitFor(() => server.reads.filter((r) => r === "detail:opp_1").length > before);
+    await waitFor(() => badge() === "blocked");
+    expect(text()).toContain("Row revision: 5");
+    expect(document.querySelector(".pending-error")?.textContent).toContain("already used for a different change");
+  });
+
+  it("disables an action with an explanation after the server reports operation-unavailable", async () => {
+    const server: Server = { records: new Map([["opp_1", opportunity("opp_1", "qualified", "3")]]), reads: [] };
+    let writes = 0;
+    await mount("?grant=g&record=opp_1", server, async () => {
+      writes++;
+      throw new ApiError("This action is not enabled on the server.", 501, "operation-unavailable");
+    });
+    await openTransition();
+    await type(control("New state"), "researching");
+    await type(control("Evidence for this change"), "Recheck");
+    await submit();
+    await waitFor(() => text().includes("Move to another state is not available"));
+    expect(badge()).toBe("qualified");
+    const move = [...document.querySelectorAll("button")].find((b) => b.textContent === "Move to another state");
+    expect(move?.getAttribute("aria-disabled")).toBe("true");
+    expect(text()).toContain("The server reported this action as not enabled (operation-unavailable).");
+    expect(writes).toBe(1);
+  });
+
+  it("shows packet and submission actions as disabled with reasons", async () => {
+    const server: Server = { records: new Map([["opp_1", opportunity("opp_1", "qualified", "3")]]), reads: [] };
+    await mount("?grant=g&record=opp_1", server, async () => {
+      throw Error("must not write");
+    });
+    await waitFor(() => text().includes("Create packet is not available"));
+    expect(text()).toContain("Creating packets is not enabled on the server yet. Nothing is created or sent.");
+    expect(text()).toContain("Recording submissions is not enabled on the server yet. Nothing is recorded.");
+  });
+
   it("requires confirmation before withdrawing or declining", async () => {
     const server: Server = { records: new Map([["opp_1", opportunity("opp_1", "qualified", "3")]]), reads: [] };
     let called = false;
@@ -245,6 +292,7 @@ describe("opportunity detail writes", () => {
     expect(badge()).toBe("qualified");
     expect(text()).not.toContain("Choose workspace grant Personal Control Workspace authority");
     expect(document.querySelector('a[href="/owner/apps/job-stack"]')).not.toBeNull();
+    expect(document.querySelector('.pending-error a[href="/owner/apps/job-stack"]')).not.toBeNull();
     expect(text()).toContain("Staff Engineer opp_1");
     elevated = true;
     const retry = [...document.querySelectorAll(".toast button")].find((b) => b.textContent === "Retry") as HTMLButtonElement;

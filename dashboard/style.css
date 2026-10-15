@@ -440,6 +440,17 @@ main:focus {
 .not-enabled h3 {
   margin-top: 0;
 }
+.disabled-action {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 34ch;
+}
+.disabled-action button,
+button[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .action-unavailable {
   font-size: 0.88rem;
   color: var(--text-muted);

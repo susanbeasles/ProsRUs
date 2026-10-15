@@ -1,4 +1,4 @@
-import { PendingChanges, Unavailable, WriteAction } from "../../components/Actions";
+import { DisabledAction, PendingChanges, Unavailable, WriteAction } from "../../components/Actions";
 import { CardsSkeleton, EmptyState, NotEnabled, Skeleton } from "../../components/Feedback";
 import { BackLink, DetailHeading, PageHeader, ViewTabs } from "../../components/Layout";
 import { OpportunityChoices } from "../../components/Options";
@@ -137,6 +137,7 @@ function ThreadDetail({ entityId }: { entityId: string }) {
             />
             <div className="actions">
               <SaveDraft row={row} />
+              <DisabledAction label="Send reply" reason="sending is an external effect that is not enabled. Drafts are never delivered." />
             </div>
             <SendingNotEnabled />
             <PendingChanges entity={threadEntity(row.entityId)} />
