@@ -1,23 +1,16 @@
+// The record detail moved from dashboard/pages/Opportunities (list + detail in one component) to the
+// presentational features/opportunities/ObservationDetail; the assertions below are unchanged.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import {
-  Opportunities,
-  type PipelineProps,
-} from "../dashboard/pages/Opportunities";
-import type { ReadRecord } from "../dashboard/api";
-function props(current: ReadRecord): PipelineProps {
+  ObservationDetail as Opportunities,
+  type ObservationDetailProps,
+} from "../dashboard/features/opportunities/ObservationDetail";
+import type { ReadRecord } from "../dashboard/lib/api";
+function props(current: ReadRecord): ObservationDetailProps {
   return {
-    records: [],
     current,
-    selected: current.entityId,
-    complete: true,
-    loaded: 1,
-    total: 1,
-    query: "",
-    setQuery: () => {},
-    all: true,
-    setAll: () => {},
     select: () => {},
     history: false,
     versions: [],

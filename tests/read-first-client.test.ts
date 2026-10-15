@@ -1,5 +1,5 @@
 import { expect, it, vi, afterEach } from "vitest";
-import { request } from "../dashboard/api";
+import { request } from "../dashboard/lib/api";
 afterEach(() => vi.unstubAllGlobals());
 it("binds every owner data read to selected grant and a fresh one-use operation nonce", async () => {
   const fetcher = vi
@@ -58,7 +58,7 @@ it("runtime rejects combined recognized selectors and content/upload variants", 
   ).toThrow("invalid-shared-value");
 });
 
-import { createReadClient } from "../dashboard/api";
+import { createReadClient } from "../dashboard/lib/api";
 const pendingProtection = {
   versionId: "synthetic_version",
   documentApproval: "draft",

@@ -1,222 +1,153 @@
-import { readFileSync } from "node:fs";
-import vm from "node:vm";
-import ts from "typescript";
+// Rewritten deliberately for the routed dashboard. The previous version executed callbacks parsed
+// out of the 382-line dashboard/main.tsx App; that component is now split into app/router.ts
+// (semantic route equality), app/navigation.ts (navigation -> cache generation) and lib/workspace.ts
+// (per-grant cache and mutations). The same invariants are asserted against those real modules:
+// equal navigation keeps in-flight reads, distinct navigation aborts them and drops late responses,
+// a grant change discards the workspace, and refresh always clears and advances.
 import { expect, it } from "vitest";
+import { bindNavigation } from "../dashboard/app/navigation";
+import { createRouter, type RouterWindow } from "../dashboard/app/router";
+import { keys } from "../dashboard/lib/queries";
+import { WorkspaceStore, type Services } from "../dashboard/lib/workspace";
 
-// Execute the maintained callbacks and dependency expression, not a rewritten
-// navigation model. This is source-level evidence, not browser/React execution.
-const source = readFileSync(
-  new URL("../dashboard/main.tsx", import.meta.url),
-  "utf8",
-);
-const parsed = ts.createSourceFile(
-  "main.tsx",
-  source,
-  ts.ScriptTarget.Latest,
-  true,
-  ts.ScriptKind.TSX,
-);
-const app = parsed.statements.find(
-  (node): node is ts.FunctionDeclaration =>
-    ts.isFunctionDeclaration(node) && node.name?.text === "App",
-);
-const location = parsed.statements.find(
-  (node): node is ts.FunctionDeclaration =>
-    ts.isFunctionDeclaration(node) && node.name?.text === "locationState",
-);
-if (!app?.body || !location) throw Error("Actual navigation source missing");
-const callbacks = app.body.statements.filter(ts.isFunctionDeclaration);
-const effects = app.body.statements
-  .filter(ts.isExpressionStatement)
-  .map((node) => node.expression)
-  .filter(
-    (node): node is ts.CallExpression =>
-      ts.isCallExpression(node) &&
-      node.expression.getText(parsed) === "useEffect",
-  );
-const dependencies = effects.at(-1)?.arguments[1];
-let pop: ts.Expression | undefined, refresh: ts.Expression | undefined;
-function inspect(node: ts.Node): void {
-  if (ts.isVariableDeclaration(node) && node.name.getText(parsed) === "pop")
-    pop = node.initializer;
-  if (
-    ts.isJsxAttribute(node) &&
-    node.name.getText(parsed) === "onClick" &&
-    node.initializer &&
-    ts.isJsxExpression(node.initializer) &&
-    node.initializer.expression?.getText(parsed).includes("setRefresh")
-  )
-    refresh = node.initializer.expression;
-  ts.forEachChild(node, inspect);
-}
-inspect(app);
-if (!dependencies || !pop || !refresh)
-  throw Error("Actual navigation callback/dependencies missing");
-const callbackSource =
-  [location, ...callbacks].map((node) => node.getText(parsed)).join("\n") +
-  `\nfunction readDependencies(){return ${dependencies.getText(parsed)};}\nfunction runPop(){(${pop.getText(parsed)})();}\nfunction runRefresh(){(${refresh.getText(parsed)})();}`;
-const executable = ts.transpileModule(callbackSource, {
-  compilerOptions: { target: ts.ScriptTarget.ES2022 },
-}).outputText;
-type Selection = {
-  grant: string;
-  record: string | null;
-  history: boolean;
-  versionId: string | null;
-  view: "relationships" | "all";
-  cursor: string | null;
+const services: Services = {
+  readClient: () => {
+    throw Error("no reads in this test");
+  },
+  write: async () => {
+    throw Error("no writes in this test");
+  },
+  now: () => 1000,
+  requestKey: () => "synthetic-key",
 };
+
 function fixture(query: string) {
-  const url = new URL("https://local.invalid/owner/job-stack?" + query),
-    controller = new AbortController();
-  const params = url.searchParams;
-  const selection: Selection = {
-    grant: params.get("grant") ?? "",
-    record: params.get("record"),
-    history: params.get("history") === "1",
-    versionId: params.get("version"),
-    view: params.get("view") === "all" ? "all" : "relationships",
-    cursor: params.get("cursor"),
-  };
-  const state: {
-    current: unknown;
-    versions: unknown;
-    version: unknown;
-    protection: unknown;
-  } = {
-    current: { entityId: "record" },
-    versions: [{ versionId: "past" }],
-    version: { versionId: "past" },
-    protection: { status: "available" },
-  };
-  const original = { ...state };
-  let cleared = 0,
-    pushes = 0,
-    selectionUpdates = 0;
-  const context = {
-    URL,
-    URLSearchParams,
-    location: { href: url.href, search: url.search },
-    selection,
-    selectionRef: { current: selection },
-    refresh: 0,
-    detailController: { current: controller },
-    navigationGeneration: {current:0},
-    pageTrail: {current:[]},
-    active: {current:new Set([controller])},
-    page:null,
-    setRecords:()=>{},setPage:()=>{},setTotal:()=>{},setComplete:()=>{},setError:()=>{},
-    setCurrent: (v: unknown) => {
-      cleared++;
-      state.current = v;
-    },
-    setVersions: (v: unknown) => {
-      state.versions = v;
-    },
-    setVersion: (v: unknown) => {
-      state.version = v;
-    },
-    setProtection: (v: unknown) => {
-      state.protection = v;
-    },
-    setSelection: (v: Selection) => {
-      selectionUpdates++;
-      context.selection = v;
-    },
-    setRefresh: (f: (v: number) => number) => {
-      context.refresh = f(context.refresh);
-    },
-    window: {
-      history: {
-        pushState: (_state: unknown, _title: string, u: URL) => {
-          pushes++;
-          context.location.href = u.href;
-          context.location.search = u.search;
-        },
+  const listeners = new Set<() => void>();
+  let pushes = 0;
+  const win = {
+    location: { search: "?" + query, pathname: "/owner/job-stack" },
+    history: {
+      state: null as unknown,
+      pushState(state: unknown, _unused: string, url: string) {
+        pushes++;
+        win.history.state = state;
+        win.location.search = url.slice(url.indexOf("?"));
       },
+      replaceState() {},
     },
+    addEventListener: (_type: "popstate", listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: "popstate", listener: () => void) => listeners.delete(listener),
   };
-  const sandbox = vm.createContext(context);
-  vm.runInContext(executable, sandbox);
-  function run(code: string) {
-    return vm.runInContext(code, sandbox);
-  }
-  const before: readonly unknown[] = run("readDependencies()");
-  return {
-    state,
-    original,
-    controller,
-    context,
-    run,
-    unchanged: () => {
-      const after: readonly unknown[] = run("readDependencies()");
-      return before.every((v, i) => Object.is(v, after[i]));
+  const router = createRouter(win as unknown as RouterWindow);
+  router.start();
+  const store = new WorkspaceStore(services);
+  bindNavigation(router, store);
+  const workspace = store.forGrant(router.route().grant);
+  const detail = { entityId: "record" },
+    protection = { versionId: "past" };
+  workspace.cache.setData(keys.record("opportunity", "record"), () => detail);
+  workspace.cache.setData(keys.protection("past"), () => protection);
+  let signal: AbortSignal | undefined;
+  let release: (value: unknown) => void = () => {};
+  const inFlight = workspace.cache.fetch({
+    key: keys.version("past", "lineage", "record"),
+    fetch: (s) => {
+      signal = s;
+      return new Promise((resolve) => (release = resolve));
     },
-    counts: () => ({ cleared, pushes, selectionUpdates }),
+  });
+  const generation = workspace.cache.generation;
+  return {
+    router,
+    store,
+    workspace,
+    win,
+    signal: () => signal,
+    pushes: () => pushes,
+    late: async () => {
+      release({ versionId: "past" });
+      return inFlight;
+    },
+    unchanged: () =>
+      workspace.cache.peek(keys.record("opportunity", "record")) === detail &&
+      workspace.cache.peek(keys.protection("past")) === protection &&
+      workspace.cache.generation === generation,
+    pop(search: string) {
+      win.location.search = search;
+      for (const listener of listeners) listener();
+    },
   };
 }
+
 const current = "grant=grant&record=record",
   history = current + "&history=1",
   past = history + "&version=past";
 for (const [name, query, action] of [
-  ["selected history version", past, 'selectVersion("past")'],
-  ["current record", current, 'select("record")'],
-  ["current history target", history, 'select("record",true)'],
-  ["current history version list", history, "selectVersion(null)"],
+  ["selected history version", past, (f: ReturnType<typeof fixture>) => f.router.navigate((r) => ({ ...r, versionId: "past" }))],
+  ["current record", current, (f: ReturnType<typeof fixture>) => f.router.navigate((r) => ({ ...r, record: "record", history: false, versionId: null }))],
+  ["current history target", history, (f: ReturnType<typeof fixture>) => f.router.navigate((r) => ({ ...r, record: "record", history: true, versionId: null }))],
+  ["current history version list", history, (f: ReturnType<typeof fixture>) => f.router.navigate((r) => ({ ...r, versionId: null }))],
 ] as const)
   it(`repeating the ${name} preserves current data and its in-flight controller`, () => {
     const f = fixture(query);
-    f.run(action);
-    expect(f.controller.signal.aborted).toBe(false);
-    expect(f.state).toEqual(f.original);
+    expect(action(f)).toBe(false);
+    expect(f.signal()?.aborted).toBe(false);
     expect(f.unchanged()).toBe(true);
-    expect(f.counts()).toEqual({ cleared: 0, pushes: 0, selectionUpdates: 0 });
+    expect(f.pushes()).toBe(0);
   });
+
 it("equal semantic pop navigation preserves data despite URL order/irrelevant fields", () => {
   const f = fixture(past);
-  f.context.location.search =
-    "?version=past&history=1&record=record&grant=grant&ignored=1";
-  f.run("runPop()");
-  expect(f.controller.signal.aborted).toBe(false);
-  expect(f.state).toEqual(f.original);
+  f.pop("?version=past&history=1&record=record&grant=grant&ignored=1");
+  expect(f.signal()?.aborted).toBe(false);
   expect(f.unchanged()).toBe(true);
-  expect(f.counts().cleared).toBe(0);
 });
-for (const action of ['selectVersion("other")', 'select("other_record")'])
-  it(`distinct navigation cancels and changes actual loader dependencies: ${action}`, () => {
+
+for (const [label, target] of [
+  ['selectVersion("other")', { versionId: "other" }],
+  ['select("other_record")', { record: "other_record", history: false, versionId: null }],
+] as const)
+  it(`distinct navigation cancels and changes actual loader dependencies: ${label}`, async () => {
     const f = fixture(past);
-    f.run(action);
-    expect(f.controller.signal.aborted).toBe(true);
-    expect(f.state.current).toBe(null);
-    expect(f.state.protection).toBe(null);
-    expect(f.unchanged()).toBe(false);
-    expect(f.counts().pushes).toBe(1);
+    const before = f.workspace.cache.generation;
+    expect(f.router.navigate((r) => ({ ...r, ...target }))).toBe(true);
+    expect(f.signal()?.aborted).toBe(true);
+    expect(f.workspace.cache.generation).toBe(before + 1);
+    expect(await f.late()).toBeUndefined();
+    expect(f.workspace.cache.peek(keys.version("past", "lineage", "record"))).toBeUndefined();
+    expect(f.pushes()).toBe(1);
   });
-it("a distinct grant pop cancels old detail and changes actual loader dependencies", () => {
+
+it("a distinct grant pop cancels old detail and changes actual loader dependencies", async () => {
   const f = fixture(past);
-  f.context.location.search =
-    "?grant=other&record=record&history=1&version=past";
-  f.run("runPop()");
-  expect(f.controller.signal.aborted).toBe(true);
-  expect(f.state.current).toBe(null);
-  expect(f.state.protection).toBe(null);
-  expect(f.unchanged()).toBe(false);
-  expect(f.counts().pushes).toBe(0);
+  f.pop("?grant=other&record=record&history=1&version=past");
+  expect(f.signal()?.aborted).toBe(true);
+  expect(f.workspace.cache.peek(keys.record("opportunity", "record"))).toBeUndefined();
+  expect(f.workspace.cache.peek(keys.protection("past"))).toBeUndefined();
+  const next = f.store.forGrant("other");
+  expect(next).not.toBe(f.workspace);
+  expect(next.cache.keys()).toEqual([]);
+  expect(await f.late()).toBeUndefined();
+  expect(f.pushes()).toBe(0);
 });
-it("explicit refresh clears and always advances a real loader dependency", () => {
+
+it("explicit refresh clears and always advances a real loader dependency", async () => {
   const f = fixture(past);
-  f.run("runRefresh()");
-  expect(f.controller.signal.aborted).toBe(true);
-  expect(f.state.current).toBe(null);
-  expect(f.state.protection).toBe(null);
-  expect(f.unchanged()).toBe(false);
-  expect(f.context.refresh).toBe(1);
+  const before = f.workspace.cache.generation;
+  f.workspace.refresh();
+  expect(f.signal()?.aborted).toBe(true);
+  expect(f.workspace.cache.peek(keys.record("opportunity", "record"))).toBeUndefined();
+  expect(f.workspace.cache.peek(keys.protection("past"))).toBeUndefined();
+  expect(f.workspace.cache.generation).toBeGreaterThan(before);
+  expect(await f.late()).toBeUndefined();
 });
+
 it("a repeated new target stays idempotent before another render or effect", () => {
   const f = fixture(past);
-  f.run('selectVersion("other")');
-  const once = f.counts();
-  f.run('selectVersion("other")');
-  expect(f.counts()).toEqual(once);
-  expect(f.context.selectionRef.current.versionId).toBe("other");
+  expect(f.router.navigate((r) => ({ ...r, versionId: "other" }))).toBe(true);
+  const generation = f.workspace.cache.generation;
+  expect(f.router.navigate((r) => ({ ...r, versionId: "other" }))).toBe(false);
+  expect(f.pushes()).toBe(1);
+  expect(f.workspace.cache.generation).toBe(generation);
+  expect(f.router.route().versionId).toBe("other");
 });
