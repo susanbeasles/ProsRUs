@@ -1,0 +1,31 @@
+{
+  "schema": "application-deployment/v1",
+  "application": "prosrus",
+  "repository": "susanbeasles/ProsRUs",
+  "repositoryId": 1412827677,
+  "targets": [
+    {
+      "id": "prosrus-d1-migrations",
+      "adapter": "cloudflare-d1-migrate/v1",
+      "build": { "migrationsDir": "migrations", "binding": "DB" },
+      "dependsOn": [],
+      "recoveryPolicy": "forward-only"
+    },
+    {
+      "id": "prosrus-worker",
+      "adapter": "cloudflare-worker/v1",
+      "build": {
+        "wranglerConfig": "wrangler.jsonc",
+        "entry": "src/worker.ts",
+        "assetsDir": "dist",
+        "buildCommand": "build"
+      },
+      "dependsOn": ["prosrus-d1-migrations"],
+      "healthContract": "http-release-marker/v1"
+    }
+  ],
+  "environments": {
+    "staging": { "allowedRefs": ["refs/heads/main"], "requiredApprovals": 0 },
+    "production": { "allowedRefs": ["refs/tags/v*"], "requiredApprovals": 1 }
+  }
+}

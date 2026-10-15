@@ -1,3 +1,4 @@
+-- compatibility: additive
 -- Additive finite domain guards. Existing 0002 history and CAS remain unchanged.
 -- All predicates execute before the transaction insert, in its single D1 batch.
 CREATE TRIGGER recovery_domain_guard BEFORE INSERT ON recovery_transactions

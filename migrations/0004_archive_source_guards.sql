@@ -1,3 +1,4 @@
+-- compatibility: additive
 -- Optional signed archive-only original dependencies. Generic saves remain inert.
 -- Source identity/current head/projection/legacy absence are checked in the same
 -- recovery transaction INSERT step, before any companion/result/outbox effects.

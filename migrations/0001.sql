@@ -1,3 +1,4 @@
+-- compatibility: additive
 PRAGMA foreign_keys = ON;
 CREATE TABLE records (
  owner TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('claim','opportunity','packet','thread','interview','offer','artifact','connection','reminder','settings','attempt','prep','question')),
