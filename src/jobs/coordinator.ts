@@ -1,19 +1,65 @@
 import { parseAuditedSourceProfile } from "../application/audited-source-profile";
 import { DurableObject } from "cloudflare:workers";
 import type { Environment } from "../environment";
-import { validateCoreOutput } from "../../integration/shared-contract.mjs";
+import {
+  operationById,
+  validateCoreOutput,
+  type CoreInvokeRequest,
+} from "../../integration/shared-contract.mjs";
 import {
   readInvocation,
-  parseReadRequest,
+  parseCoreRequest,
 } from "../application/shared-read-authority";
 import { createRecordReads } from "../application/record-reads";
+import { executeCommand } from "../application/commands/execute";
+import { createSerialQueue } from "../application/commands/serial";
+import { createRecoveryIntakeBudget } from "../application/recovery-admission";
+import { createRoutedArchive } from "../storage/routed-archive";
+import { restoredVersionResolver } from "../storage/restored-objects";
+import { readRecoveryStatus } from "../application/recovery-status";
 function unavailable(): never {
   throw Error("operation-unavailable");
 }
-/** One owner/workspace lifecycle. Read callbacks never enter a mutation tail. */
+/** One owner/workspace lifecycle. Read callbacks never enter a mutation tail;
+ * every registered command runs serialized in this object's command tail. */
 export class Coordinator extends DurableObject<Environment> {
-  async invokeCore(value: unknown): Promise<unknown> {
-    const request = parseReadRequest(value);
+  #commands = createSerialQueue();
+  #intakeBudget = createRecoveryIntakeBudget();
+  async invokeCore(
+    value: unknown,
+    body?: ReadableStream<Uint8Array>,
+  ): Promise<unknown> {
+    let request: CoreInvokeRequest;
+    try {
+      request = parseCoreRequest(value);
+    } catch (error) {
+      if (body && !body.locked) await body.cancel().catch(() => undefined);
+      throw error;
+    }
+    if (operationById(request.operationId)?.effect !== "read")
+      return this.#commands.run(() =>
+        executeCommand(
+          request,
+          {
+            db: this.env.DB,
+            archive: createRoutedArchive(
+              { originals: this.env.ORIGINALS, uploads: this.env.UPLOADS },
+              restoredVersionResolver(this.env.DB),
+            ),
+            authority: this.env.CONTROL_AUTHORITY,
+            trustRoot: this.env.RECOVERY_TRUST_ROOT,
+            budget: this.#intakeBudget,
+          },
+          body,
+        ),
+      );
+    if (body && !body.locked) {
+      await body.cancel().catch(() => undefined);
+      throw Error("operation-denied");
+    }
+    return this.#read(request);
+  }
+  async #read(request: CoreInvokeRequest): Promise<unknown> {
     const invocation = await readInvocation(
       request,
       this.env.CONTROL_AUTHORITY,
@@ -43,6 +89,9 @@ export class Coordinator extends DurableObject<Environment> {
         break;
       case "job-stack.protection.read.v1":
         output = await reads.protection(request.input.versionId);
+        break;
+      case "job-stack.recovery.status.read.v1":
+        output = await readRecoveryStatus(this.env.DB, ownerId, workspaceId, Date.now());
         break;
       default:
         return unavailable();

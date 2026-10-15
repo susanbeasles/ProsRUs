@@ -4,7 +4,7 @@
  "assets":{"directory":"./dist","binding":"ASSETS","run_worker_first":true,"not_found_handling":"single-page-application"},
  "vars":{"OWNER_ID":"local-owner","GATEWAY_ORIGIN":"http://localhost:8787","GOOGLE_CLIENT_ID":"","GOOGLE_REDIRECT_URI":"http://localhost:8787/owner/job-stack/google/callback","GOOGLE_PUBSUB_TOPIC":""},
  "d1_databases":[{"binding":"DB","database_name":"job-stack-local","database_id":"local","migrations_dir":"migrations"}],
- "r2_buckets":[{"binding":"ARTIFACTS","bucket_name":"job-stack-local"}],
+ "r2_buckets":[{"binding":"ORIGINALS","bucket_name":"job-stack-local-originals"},{"binding":"UPLOADS","bucket_name":"job-stack-local-uploads"}],
  "durable_objects":{"bindings":[{"name":"COORDINATOR","class_name":"Coordinator"}]},
  "migrations":[{"tag":"v1","new_sqlite_classes":["Coordinator"]}],
  "queues":{"producers":[{"binding":"JOBS","queue":"job-stack-local"}],"consumers":[{"queue":"job-stack-local","max_batch_size":1,"max_retries":3}]}

@@ -13,6 +13,38 @@ await build({
   format: "esm",
   target: "es2022",
 });
+// This harness runs the archive in Node against Miniflare's R2 proxy. Node has
+// no Workers FixedLengthStream; this test-only stand-in enforces the same exact
+// length so promotion of a staged upload runs the production stream path.
+globalThis.FixedLengthStream ??= class FixedLengthStream extends TransformStream {
+  constructor(length) {
+    let seen = 0;
+    super({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > length) throw Error("STREAM_LENGTH_MISMATCH");
+        controller.enqueue(chunk);
+      },
+      flush() {
+        if (seen !== length) throw Error("STREAM_LENGTH_MISMATCH");
+      },
+    });
+  }
+};
+// Miniflare's Node-side R2 proxy needs a known-length body; Workerd does not.
+// Buffer stream bodies (small fixtures only) so the production stream path runs.
+function nodeBucket(bucket) {
+  return new Proxy(bucket, {
+    get(target, property) {
+      if (property !== "put") return Reflect.get(target, property).bind(target);
+      return async (key, body, options) => {
+        if (!(body instanceof ReadableStream)) return target.put(key, body, options);
+        const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+        return target.put(key, bytes, options);
+      };
+    },
+  });
+}
 const r = await import("../artifacts/core-archive-source-runtime.mjs"),
   cases = [
     "control",
@@ -54,7 +86,7 @@ async function snapshot(db) {
   );
 }
 try {
-  const archive = r.createPrimaryArchive(await mf.getR2Bucket("BUCKET")),
+  const archive = r.createPrimaryArchive(nodeBucket(await mf.getR2Bucket("BUCKET"))),
     origin = await r.preparationFixture();
   const uploads = r.createUploadIntake({
     archive,

@@ -54,7 +54,8 @@ export function validatePart(
     part.artifact.sizeBytes === expectedChunkBytes(session, ordinal) &&
       part.artifact.object.provider === "primary" &&
       part.artifact.object.namespace === session.namespace &&
-      part.artifact.object.key === `blobs/${part.artifact.digest}` &&
+      part.artifact.object.key ===
+        `${uploadPrefix(session)}/chunks/${part.artifact.digest}` &&
       part.artifact.object.versionId !== null &&
       part.artifact.mediaType === "application/octet-stream",
     "UPLOAD_PART_CONFLICT",

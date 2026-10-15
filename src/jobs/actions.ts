@@ -1,4 +1,4 @@
-import { denyLegacyEffect } from "../application/read-first-policy";
+import { denyLegacyOperation } from "../application/commands/registry";
 import { z } from "zod";
 import {
   demand,
@@ -371,7 +371,7 @@ export function createActions(deps: ActionDependencies) {
     });
   }
   async function perform(id: string): Promise<Intent | null> {
-    denyLegacyEffect();
+    denyLegacyOperation("queue");
     const intent = await store.intent(id);
     demand(intent, "INTENT_NOT_FOUND");
     if (!(await store.claimIntent(id, deps.now()))) return intent;

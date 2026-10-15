@@ -32,7 +32,7 @@ const mf = new Miniflare(
     compatibilityFlags: ["nodejs_compat"],
     host: "127.0.0.1",
     d1Databases: { DB: "test" },
-    r2Buckets: ["ARTIFACTS"],
+    r2Buckets: ["ORIGINALS", "UPLOADS"],
     durableObjects: {
       COORDINATOR: { className: "Coordinator", useSQLite: true },
     },

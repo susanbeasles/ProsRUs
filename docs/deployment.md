@@ -1,6 +1,10 @@
 # Deployment and private configuration boundaries
 
-Production is a private named `JobStack` capability of canonical Control. The default Worker returns 404; public workers.dev/preview ingress, cron and queue effects remain disabled in the preserved staging overlay. Do not deploy the loopback-only development entrypoint.
+Production is a private named `JobStack` capability of canonical Control. The default Worker serves only the `http-release-marker/v1` health route `GET /.well-known/release-marker` (also `JobStack.releaseMarker()`) and returns 404 otherwise; public workers.dev/preview ingress, cron and queue consumers remain disabled. The `JOBS` queue binding is producer-only and reserved for separately gated external effects. Do not deploy the loopback-only development entrypoint.
+
+`deployment/application.json` is the `application-deployment/v1` manifest for the artifact-driven control plane (D1 migrations target, then the Worker target with the release-marker health contract); `node --test scripts/test-deployment-manifest.mjs` validates it. `wrangler.jsonc` stays service-only and keeps its bindings with placeholder resource ids: the deployer resolves the real D1 database id, R2 bucket, queue and `CONTROL_AUTHORITY` service from the Terraform application registry and rejects mismatched claims. Every migration starts with a `-- compatibility:` header (all current ones are additive, forward-only).
+
+Build/deploy-time Product configuration, none of it secret or committed: `RELEASE_MARKER`, the plain_text canonical release-marker/v1 JSON injected by the release builder ([ADR 0003](adr/0003-release-marker-binding.md); absent locally, where the committed `unreleased` placeholder is served; malformed answers 503); and `RECOVERY_TRUST_ROOT`, the public `recovery-trust-root-v1` JWK of Control's recovery signing key. Without the trust root every versioned save fails closed before any state.
 
 Use existing resource ownership, encrypted state, reviewed plans, committed locks and signing/release controls. Adopt existing resources rather than recreating them. Select exact account/workspace/provider mappings and obtain action-time approval before infrastructure, credentials, policy, grants or deployment changes. Source cleanup applies no live configuration.
 

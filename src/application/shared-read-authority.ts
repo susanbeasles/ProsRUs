@@ -3,9 +3,11 @@ import {
   CONTRACT,
   canonicalJson,
   detachedJson,
+  stageAllowed,
   validateCoreInput,
   validateInvocation,
   operationById,
+  type CoreEffect,
   type CoreInvokeRequest,
   type SharedInvocation,
   type RpcByName,
@@ -14,8 +16,19 @@ import { demand } from "../domain/model";
 export interface ReadAuthority {
   revalidate(request: RpcByName["revalidate"]): Promise<unknown>;
 }
+/** The reciprocal Control `JobStackAuthority` surface the Product calls. Only
+ * current-authority revalidation and preparation signing are used. */
+export interface ControlAuthority extends ReadAuthority {
+  signPreparation(request: RpcByName["signPreparation"]): Promise<unknown>;
+}
+export type RevalidationStage = RpcByName["revalidate"]["stage"];
+export type CurrentInvocation = Readonly<{
+  invocation: SharedInvocation;
+  now: number;
+  expiresAtMs: number;
+}>;
 // Only this trusted binding response may carry Workerd's disposal marker.
-function rpcValue(value: unknown): unknown {
+export function rpcValue(value: unknown): unknown {
   if (value === null || typeof value !== "object") return detachedJson(value);
   const marker = Object.getOwnPropertyDescriptor(value, Symbol.dispose);
   if (!marker) return detachedJson(value);
@@ -37,7 +50,13 @@ function rpcValue(value: unknown): unknown {
     marker.value.call(value);
   }
 }
-export function parseReadRequest(value: unknown): CoreInvokeRequest {
+/** Closed public envelope for any registered catalog operation. The internal
+ * recovery commit operation is never reachable through this ingress. */
+export function parseCoreRequest(
+  value: unknown,
+  accept: (effect: string) => boolean = (effect) =>
+    effect !== "recovery-commit",
+): CoreInvokeRequest {
   const envelope = z
     .object({
       contract: z.literal(CONTRACT),
@@ -48,16 +67,35 @@ export function parseReadRequest(value: unknown): CoreInvokeRequest {
     .strict()
     .parse(detachedJson(value));
   const operation = operationById(envelope.operationId);
-  demand(operation?.effect === "read", "operation-unavailable");
+  demand(
+    operation &&
+      operation.effect !== "recovery-commit" &&
+      accept(operation.effect),
+    "operation-unavailable",
+  );
   const input = validateCoreInput(operation.id, envelope.input);
   // The finite operation discriminator and its exact input were both validated.
   return { ...envelope, operationId: operation.id, input } as CoreInvokeRequest;
+}
+export function parseReadRequest(value: unknown): CoreInvokeRequest {
+  return parseCoreRequest(value, (effect) => effect === "read");
 }
 export async function readInvocation(
   request: CoreInvokeRequest,
   authority: ReadAuthority,
   stage: "read" | "before-ack" = "read",
 ): Promise<SharedInvocation> {
+  return (await currentInvocation(request, authority, stage, "read"))
+    .invocation;
+}
+/** Fresh current-authority decision for one exact stage. Never cached: every
+ * call is a new Control revalidation bound to the exact input digest. */
+export async function currentInvocation(
+  request: CoreInvokeRequest,
+  authority: ReadAuthority,
+  stage: RevalidationStage,
+  effect: CoreEffect,
+): Promise<CurrentInvocation> {
   const envelope = z
     .object({
       contract: z.literal(CONTRACT),
@@ -68,6 +106,11 @@ export async function readInvocation(
     .strict()
     .parse(detachedJson(request));
   demand(envelope.operationId === request.operationId, "operation-denied");
+  demand(
+    operationById(request.operationId)?.effect === effect &&
+      stageAllowed(request.operationId, stage),
+    "operation-denied",
+  );
   const input = validateCoreInput(request.operationId, envelope.input);
   const bytes = new TextEncoder().encode(
     CONTRACT +
@@ -102,11 +145,11 @@ export async function readInvocation(
     invocation.invocationId === envelope.invocationId &&
       invocation.operation.id === request.operationId &&
       invocation.operation.inputDigest === inputDigest &&
-      invocation.operation.effect === "read" &&
+      invocation.operation.effect === effect &&
       invocation.capability.workspace.workspaceId === input.workspaceId &&
       result.now < result.expiresAtMs &&
       result.expiresAtMs <= invocation.expiresAtMs,
     "operation-denied",
   );
-  return invocation;
+  return { invocation, now: result.now, expiresAtMs: result.expiresAtMs };
 }

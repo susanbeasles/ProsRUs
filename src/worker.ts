@@ -1,27 +1,74 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Environment } from "./environment";
+import { operationById } from "../integration/shared-contract.mjs";
 import {
-  readInvocation,
-  parseReadRequest,
+  currentInvocation,
+  parseCoreRequest,
 } from "./application/shared-read-authority";
+import { commandFor } from "./application/commands/registry";
+import { publicFailure } from "./application/commands/execute";
+import {
+  RELEASE_MARKER_PATH,
+  releaseMarker,
+  releaseMarkerResponse,
+} from "./release-marker";
 export { Coordinator } from "./jobs/coordinator";
 function unavailable(): never {
   throw Error("operation-unavailable");
 }
+async function discard(body: ReadableStream<Uint8Array> | undefined) {
+  if (body && !body.locked) await body.cancel().catch(() => undefined);
+}
 export class JobStack extends WorkerEntrypoint<Environment> {
-  async invokeCore(value: unknown): Promise<unknown> {
-    const request = parseReadRequest(value);
-    const invocation = await readInvocation(
-      request,
-      this.env.CONTROL_AUTHORITY,
-    );
+  /** Thin authority + Durable Object forwarder. Reads keep their existing
+   * contract; commands are refused here when the registry says unavailable,
+   * before any authority call. Only the upload chunk may carry a body stream. */
+  async invokeCore(
+    value: unknown,
+    body?: ReadableStream<Uint8Array>,
+  ): Promise<unknown> {
+    let request, effect;
+    try {
+      request = parseCoreRequest(value);
+      const operation = operationById(request.operationId);
+      if (!operation || operation.effect === "recovery-commit") unavailable();
+      effect = operation.effect;
+      if (effect !== "read") commandFor(request.operationId);
+      if (body !== undefined && request.operationId !== "job-stack.upload.chunk.v1")
+        throw Error("operation-denied");
+    } catch (error) {
+      await discard(body);
+      if (request === undefined || effect === "read") throw error;
+      throw Error(publicFailure(error));
+    }
+    let invocation;
+    try {
+      invocation = (
+        await currentInvocation(
+          request,
+          this.env.CONTROL_AUTHORITY,
+          "read",
+          effect,
+        )
+      ).invocation;
+    } catch (error) {
+      await discard(body);
+      if (effect === "read") throw error;
+      throw Error("operation-denied");
+    }
     const workspace = invocation.capability.workspace;
     const stub = this.env.COORDINATOR.get(
       this.env.COORDINATOR.idFromName(
         workspace.ownerId + "/" + workspace.workspaceId,
       ),
     );
-    return stub.invokeCore(request);
+    return body === undefined
+      ? stub.invokeCore(request)
+      : stub.invokeCore(request, body);
+  }
+  /** Same `http-release-marker/v1` payload for service-only health checks. */
+  async releaseMarker() {
+    return releaseMarker(this.env.RELEASE_MARKER);
   }
   async ownerAsset(request: Request) {
     const url = new URL(request.url),
@@ -85,9 +132,16 @@ export class JobStack extends WorkerEntrypoint<Environment> {
   }
 }
 export default {
-  async fetch() {
+  async fetch(request: Request, env: Environment) {
+    if (
+      request.method === "GET" &&
+      new URL(request.url).pathname === RELEASE_MARKER_PATH
+    )
+      return releaseMarkerResponse(env.RELEASE_MARKER);
     return new Response("Not found", { status: 404 });
   },
+  // Cron and queue consumers stay disabled; the JOBS producer binding is
+  // reserved for separately gated external effects.
   async scheduled() {
     return unavailable();
   },

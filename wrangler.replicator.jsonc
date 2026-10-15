@@ -1,0 +1,22 @@
+// Independent backup replicator (ADR 0004). Separate Worker identity; the only
+// principal bound to the backup bucket. No route, no workers.dev, no queue.
+// Resource ids are claims: the deployer resolves them from the Terraform
+// registry. The Secrets Store binding is created by the root provisioning path
+// and inherited on deploy; its value never appears in this repository.
+{
+ "$schema":"node_modules/wrangler/config-schema.json",
+ "name":"job-stack-staging-replicator",
+ "main":"src/replicator/worker.ts",
+ "compatibility_date":"2026-10-08",
+ "compatibility_flags":["nodejs_compat"],
+ "workers_dev":false,"preview_urls":false,
+ "observability":{"enabled":true,"head_sampling_rate":1},
+ "vars":{"OWNER_ID":"UNCONFIGURED"},
+ "d1_databases":[{"binding":"DB","database_name":"job-stack-staging","database_id":"00000000-0000-0000-0000-000000000000","migrations_dir":"migrations"}],
+ "r2_buckets":[
+  {"binding":"ORIGINALS","bucket_name":"job-stack-staging-originals"},
+  {"binding":"BACKUP","bucket_name":"job-stack-staging-backup"}
+ ],
+ "secrets_store_secrets":[{"binding":"RECEIPT_SIGNING_KEY","store_id":"00000000000000000000000000000000","secret_name":"job-stack-staging-receipt-signing-key"}],
+ "triggers":{"crons":["*/5 * * * *","23 3 * * *","53 3 1 * *"]}
+}

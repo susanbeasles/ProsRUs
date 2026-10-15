@@ -9,7 +9,7 @@
  "observability":{"enabled":true,"head_sampling_rate":0.1},
  "vars":{"OWNER_ID":"UNCONFIGURED","GATEWAY_ORIGIN":"https://control.vespoli.me","GOOGLE_CLIENT_ID":"","GOOGLE_REDIRECT_URI":"https://control.vespoli.me/owner/job-stack/google/callback","GOOGLE_PUBSUB_TOPIC":""},
  "d1_databases":[{"binding":"DB","database_name":"job-stack-staging","database_id":"00000000-0000-0000-0000-000000000000","migrations_dir":"migrations"}],
- "r2_buckets":[{"binding":"ARTIFACTS","bucket_name":"job-stack-staging"}],
+ "r2_buckets":[{"binding":"ORIGINALS","bucket_name":"job-stack-staging-originals"},{"binding":"UPLOADS","bucket_name":"job-stack-staging-uploads"}],
  "durable_objects":{"bindings":[{"name":"COORDINATOR","class_name":"Coordinator"}]},
  "services":[{"binding":"CONTROL_AUTHORITY","service":"personal-control","entrypoint":"JobStackAuthority"}],
  "migrations":[{"tag":"v1","new_sqlite_classes":["Coordinator"]}],

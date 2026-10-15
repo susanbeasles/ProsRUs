@@ -1,4 +1,4 @@
-import { denyLegacyEffect } from "./read-first-policy";
+import { denyLegacyOperation } from "./commands/registry";
 import { z } from "zod";
 import { effectDigestInput } from "../domain/effects";
 import {
@@ -125,7 +125,7 @@ export function createService(deps: Dependencies) {
     operation: Operation,
     raw: unknown,
   ): Promise<unknown> {
-    denyLegacyEffect();
+    denyLegacyOperation(operation);
     const now = deps.now();
     try {
       authorize({
@@ -186,7 +186,7 @@ export function createService(deps: Dependencies) {
     );
   }
   async function snapshot(actor: Principal) {
-    denyLegacyEffect();
+    denyLegacyOperation("snapshot");
     authorize({ actor, ownerId: owner, scope: "read", now: deps.now() });
     const names = [
       "claim",

@@ -1,3 +1,4 @@
+-- compatibility: additive
 -- Recovery history is distinct from mutable legacy recruiting projections.
 -- No signed/protected historical versions can be fabricated by this migration.
 CREATE TABLE recovery_workspaces (
