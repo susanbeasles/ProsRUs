@@ -12,6 +12,9 @@ export type Environment = {
   /** Public `recovery-trust-root-v1` JSON for Control's signing key; absent
    * means versioned saves fail closed with signing unavailable. */
   RECOVERY_TRUST_ROOT?: string;
+  /** Release builder's plain_text `release-marker/v1` canonical JSON; absent
+   * locally, where the committed placeholder is served. */
+  RELEASE_MARKER?: string;
   CONTROL_AUTHORITY: import("./application/shared-read-authority").ControlAuthority;
   COORDINATOR: DurableObjectNamespace<Coordinator>;
 };

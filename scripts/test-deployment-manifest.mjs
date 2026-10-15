@@ -133,26 +133,31 @@ test("every migration declares a compatibility class and versions strictly incre
   }
 });
 
-test("the release marker writer validates release identity and writes canonical JSON", () => {
+test("the release marker helper emits only canonical RELEASE_MARKER binding JSON", () => {
   const commit = "a".repeat(40), digest = "b".repeat(64);
   assert.equal(
     releaseMarkerJson("v1.2.3", commit, digest),
-    `{"schema":"release-marker/v1","application":"prosrus","releaseTag":"v1.2.3","sourceCommit":"${commit}","artifactSha256":"${digest}"}\n`,
+    `{"application":"prosrus","artifactSha256":"${digest}","releaseTag":"v1.2.3","schema":"release-marker/v1","sourceCommit":"${commit}"}`,
   );
   for (const args of [["1.2.3", commit, digest], ["v1.2", commit, digest], ["v01.2.3", commit, digest],
     ["v1.2.3", "A".repeat(40), digest], ["v1.2.3", "0".repeat(40), digest], ["v1.2.3", commit, "0".repeat(64)],
     ["v1.2.3", commit, "b".repeat(63)], ["v1.2.3", commit, undefined]])
     assert.throws(() => releaseMarkerJson(...args), String(args));
+  const committedBefore = read("src/release-marker.json");
   const directory = mkdtempSync(join(tmpdir(), "prosrus-marker-"));
   try {
     const out = join(directory, "marker.json"), script = join(root, "scripts/write-release-marker.mjs");
-    const ok = spawnSync(process.execPath, [script, "v2.0.0", commit, digest, "--out", out], { encoding: "utf8", timeout: 5000 });
-    assert.equal(ok.status, 0, ok.stderr);
-    assert.equal(JSON.parse(readFileSync(out, "utf8")).releaseTag, "v2.0.0");
+    const printed = spawnSync(process.execPath, [script, "v2.0.0", commit, digest], { encoding: "utf8", timeout: 5000 });
+    assert.equal(printed.status, 0, printed.stderr);
+    assert.equal(JSON.parse(printed.stdout).releaseTag, "v2.0.0");
+    const written = spawnSync(process.execPath, [script, "v2.0.0", commit, digest, "--out", out], { encoding: "utf8", timeout: 5000 });
+    assert.equal(written.status, 0, written.stderr);
+    assert.equal(readFileSync(out, "utf8"), releaseMarkerJson("v2.0.0", commit, digest));
     const bad = spawnSync(process.execPath, [script, "v2.0.0", commit], { encoding: "utf8", timeout: 5000 });
     assert.notEqual(bad.status, 0);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-  assert.deepEqual(JSON.parse(read("src/release-marker.json")).releaseTag, "unreleased");
+  assert.equal(read("src/release-marker.json"), committedBefore);
+  assert.equal(JSON.parse(committedBefore).releaseTag, "unreleased");
 });

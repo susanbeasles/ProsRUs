@@ -68,7 +68,7 @@ export class JobStack extends WorkerEntrypoint<Environment> {
   }
   /** Same `http-release-marker/v1` payload for service-only health checks. */
   async releaseMarker() {
-    return releaseMarker();
+    return releaseMarker(this.env.RELEASE_MARKER);
   }
   async ownerAsset(request: Request) {
     const url = new URL(request.url),
@@ -132,12 +132,12 @@ export class JobStack extends WorkerEntrypoint<Environment> {
   }
 }
 export default {
-  async fetch(request: Request) {
+  async fetch(request: Request, env: Environment) {
     if (
       request.method === "GET" &&
       new URL(request.url).pathname === RELEASE_MARKER_PATH
     )
-      return releaseMarkerResponse();
+      return releaseMarkerResponse(env.RELEASE_MARKER);
     return new Response("Not found", { status: 404 });
   },
   // Cron and queue consumers stay disabled; the JOBS producer binding is

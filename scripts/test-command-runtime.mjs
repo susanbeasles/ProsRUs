@@ -47,6 +47,8 @@ const trustRoot = JSON.stringify({
   format: "recovery-trust-root-v1", keyId: "synthetic-control", algorithm: "ES256",
   publicJwk: { kty: publicJwk.kty, crv: publicJwk.crv, x: publicJwk.x, y: publicJwk.y },
 });
+const releasedMarker = JSON.stringify({ application: "prosrus", artifactSha256: "b".repeat(64), releaseTag: "v1.2.3",
+  schema: "release-marker/v1", sourceCommit: "a".repeat(40) });
 let externalEffects = 0;
 const denyOutbound = () => { externalEffects++; throw Error("unexpected-outbound"); };
 const common = { modules: true, compatibilityDate: "2026-10-08", compatibilityFlags: ["nodejs_compat"], cf: false };
@@ -58,6 +60,9 @@ const mf = new Miniflare(convertV4MiniflareOptions({
       durableObjects: { COORDINATOR: { className: "Coordinator", useSQLite: true } },
       bindings: { RECOVERY_TRUST_ROOT: trustRoot },
       serviceBindings: { CONTROL_AUTHORITY: { name: "authority", entrypoint: "FixtureAuthority" }, ASSETS: denyOutbound } },
+    // Same product bundle with the builder-injected RELEASE_MARKER present / malformed.
+    { ...common, name: "released", script: productScript, bindings: { RELEASE_MARKER: releasedMarker } },
+    { ...common, name: "malformed", script: productScript, bindings: { RELEASE_MARKER: releasedMarker.replace("{", "{ ") } },
     { ...common, name: "authority", script: authorityScript,
       bindings: { SIGNING_JWK: JSON.stringify(await exportJWK(keys.privateKey)) } },
   ],
@@ -109,7 +114,16 @@ try {
   for (const [path, method] of [["/.well-known/release-marker", "POST"], ["/", "GET"], ["/owner/job-stack", "GET"], ["/.well-known/release-marker/x", "GET"]])
     assert.equal((await product.fetch("https://fixture.invalid" + path, { method })).status, 404, path + method);
   assert.deepEqual(await (await mf.dispatchFetch("https://fixture.invalid/marker")).json(), markerBody);
-  pass("GET /.well-known/release-marker returns the no-store marker and JobStack.releaseMarker() matches; other paths 404");
+  const released = await (await mf.getWorker("released")).fetch("https://fixture.invalid/.well-known/release-marker");
+  assert.equal(released.status, 200);
+  const releasedBody = await released.json();
+  assert.deepEqual({ ...releasedBody, startedAt: undefined }, { ...JSON.parse(releasedMarker), startedAt: undefined });
+  assert.ok(!Number.isNaN(Date.parse(releasedBody.startedAt)));
+  const malformed = await (await mf.getWorker("malformed")).fetch("https://fixture.invalid/.well-known/release-marker");
+  assert.equal(malformed.status, 503);
+  assert.equal(malformed.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await malformed.json(), { error: "release-marker-invalid" });
+  pass("release marker: placeholder when RELEASE_MARKER is absent, the binding when present, 503 when malformed; RPC matches; other paths 404");
 
   // Write -> versioned save visible through the read operations.
   await mode("valid");
