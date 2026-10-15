@@ -22,6 +22,7 @@ import { openCommandSession, type CommandSession } from "./session";
 import { createControlSigner, parseTrustRoot } from "./control-signer";
 import { runDomainCommand } from "./domain";
 import { runVersionSave } from "./version-save";
+import { recoveredOutput, recoveryTransactionOf } from "./recovered-result";
 import {
   runUploadBegin,
   runUploadChunk,
@@ -182,10 +183,22 @@ export async function executeCommand(
     if (decision.kind === "conflict")
       throw new DomainError("REQUEST_KEY_CONFLICT", 409);
     if (decision.kind === "replay" && prior) {
-      await session.authorize("before-ack");
-      const output = validateCoreOutput(request.operationId, prior.result, {
+      // A committed local-write replays its authoritative
+      // recovery_request_results row; only intake results live in the ledger.
+      const stored =
+        prior.recoveryTransactionId === null
+          ? prior.result
+          : await recoveredOutput(
+              deps.db,
+              session.workspace,
+              definition.kind,
+              requestKey,
+              prior.recoveryTransactionId,
+            );
+      const output = validateCoreOutput(request.operationId, stored, {
         grantId,
       });
+      await session.authorize("before-ack");
       await ledger.audit(audit("replay", "stored-result"));
       return output;
     }
@@ -210,12 +223,18 @@ export async function executeCommand(
       grantId,
     });
     if (!session.acknowledged()) await session.authorize("before-ack");
+    const recoveryTransactionId = recoveryTransactionOf(
+      definition.kind,
+      output,
+    );
     await ledger.commit({
       requestKey,
       inputDigest,
-      result: output,
       now: session.now(),
       audit: audit("allow", "released"),
+      ...(recoveryTransactionId === null
+        ? { result: output }
+        : { recoveryTransactionId }),
     });
     return output;
   } catch (error) {

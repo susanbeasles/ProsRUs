@@ -1,10 +1,13 @@
 -- compatibility: additive
 -- Product command request ledger and decision audit. Additive only: no existing
 -- table, trigger or row changes. Recovery history (0002-0004) stays the sole
--- committed version record; a ledger row is the request root plus release cache.
+-- committed record of every local-write: its recovery_request_results row is
+-- written in the same D1 batch as the transaction, outbox job and domain rows.
 -- One row per owner/workspace/request key across every registered command.
--- Pending rows retain the lifecycle root; committed rows retain only the
--- released result. A committed row is never updated, rewound or deleted.
+-- Pending rows retain the lifecycle root. A committed local-write row stores
+-- only the recovery transaction id (its result is read from
+-- recovery_request_results); only intake results, which have no recovery
+-- transaction, are stored here. A committed row is never updated or deleted.
 CREATE TABLE command_requests (
  owner TEXT NOT NULL CHECK(length(owner) BETWEEN 1 AND 100),
  workspace_id TEXT NOT NULL CHECK(length(workspace_id) BETWEEN 1 AND 100),
@@ -15,12 +18,21 @@ CREATE TABLE command_requests (
  root TEXT CHECK(root IS NULL OR (json_valid(root) AND length(CAST(root AS BLOB))<=1900000)),
  root_revision INTEGER NOT NULL DEFAULT 0 CHECK(root_revision>=0),
  result TEXT CHECK(result IS NULL OR (json_valid(result) AND length(CAST(result AS BLOB))<=131072)),
+ recovery_transaction_id TEXT CHECK(recovery_transaction_id IS NULL OR length(recovery_transaction_id) BETWEEN 1 AND 100),
  created_at INTEGER NOT NULL CHECK(created_at>=0),
  updated_at INTEGER NOT NULL CHECK(updated_at>=created_at),
  PRIMARY KEY(owner,workspace_id,request_key),
- CHECK((state='committed')=(result IS NOT NULL)),
+ CHECK(CASE state WHEN 'pending' THEN result IS NULL AND recovery_transaction_id IS NULL
+  ELSE (result IS NULL)<>(recovery_transaction_id IS NULL) END),
  CHECK(state='pending' OR root IS NULL)
 ) WITHOUT ROWID;
+-- A recovery-backed commit must name the exact committed recovery result for
+-- the same owner/workspace/request key; the ledger cannot claim otherwise.
+CREATE TRIGGER command_requests_recovery_result BEFORE UPDATE OF state ON command_requests
+WHEN NEW.state='committed' AND NEW.recovery_transaction_id IS NOT NULL AND NOT EXISTS(
+ SELECT 1 FROM recovery_request_results AS committed WHERE committed.owner=NEW.owner AND committed.workspace_id=NEW.workspace_id
+  AND committed.request_key=NEW.request_key AND committed.transaction_id=NEW.recovery_transaction_id)
+BEGIN SELECT RAISE(ABORT,'COMMAND_RECOVERY_RESULT_MISSING'); END;
 -- Identity and meaning are fixed at insert; only pending rows may change.
 CREATE TRIGGER command_requests_identity_immutable BEFORE UPDATE ON command_requests
 WHEN NEW.owner IS NOT OLD.owner OR NEW.workspace_id IS NOT OLD.workspace_id OR NEW.request_key IS NOT OLD.request_key

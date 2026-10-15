@@ -293,18 +293,141 @@ describe("every committed local-write is captured for backup", () => {
               sql.startsWith("UPDATE records"),
           ),
         ).toBe(true);
-      // The request ledger agrees with the authoritative recovery result.
-      const [ledger] = h.rows(
-        "SELECT state,result FROM command_requests WHERE request_key='measured'",
-      );
+      // The ledger keeps no second copy: it names the recovery transaction
+      // whose recovery_request_results row is the released result.
+      expect(
+        h.rows(
+          "SELECT state,result,recovery_transaction_id AS tx FROM command_requests WHERE request_key='measured'",
+        ),
+      ).toEqual([{ state: "committed", result: null, tx: transactionId }]);
       const [recovery] = h.rows(
         "SELECT result FROM recovery_request_results WHERE request_key='measured'",
       );
-      expect(ledger?.state).toBe("committed");
-      const released = JSON.parse(String(ledger?.result));
-      expect("save" in released ? released.save : released).toEqual(
+      expect("save" in result ? result.save : result).toEqual(
         JSON.parse(String(recovery?.result)),
       );
+      // Replay returns the stored recovery result without a second transaction.
+      const committed = counts(h);
+      h.control.reset();
+      expect(await h.invoke(operationId, input)).toEqual(result);
+      expect(h.control.calls).toEqual(["read", "before-ack"]);
+      expect(counts(h)).toEqual(committed);
+      // The same key with another meaning creates nothing.
+      await expect(
+        h.invoke("job-stack.claim.add.v1", {
+          requestKey: "measured",
+          body: { field: "x", text: "y", sourceIds: [], permitted: false },
+        }),
+      ).rejects.toThrow("request-key-conflict");
+      expect(counts(h)).toEqual(committed);
+    },
+  );
+
+  it.each([
+    {
+      name: "a revision conflict",
+      run: async (h: Harness) =>
+        h.invoke("job-stack.opportunity.assess.v1", {
+          requestKey: "invalid",
+          body: {
+            id: (await capture(h)).entityId,
+            revision: 9,
+            terms: captureBody.terms,
+          },
+        }),
+      code: "revision-conflict",
+    },
+    {
+      name: "an invalid state transition",
+      run: async (h: Harness) =>
+        h.invoke("job-stack.opportunity.transition.v1", {
+          requestKey: "invalid",
+          body: {
+            id: (await capture(h)).entityId,
+            revision: 1,
+            state: "interviewing",
+            evidence: "Call",
+            confirmed: false,
+          },
+        }),
+      code: "invalid-transition",
+    },
+    {
+      name: "a missing record",
+      run: async (h: Harness) =>
+        h.invoke("job-stack.conversation.draft.save.v1", {
+          requestKey: "invalid",
+          body: { threadId: "missing", revision: 1, body: "Draft" },
+        }),
+      code: "domain-record-not-found",
+    },
+    {
+      name: "a settings prerequisite",
+      run: async (h: Harness) =>
+        h.invoke("job-stack.settings.update.v1", {
+          requestKey: "invalid",
+          body: { ...settingsBody, sendingEnabled: true, revision: 0 },
+        }),
+      code: "sending-prerequisites",
+    },
+    {
+      name: "a stale version parent",
+      run: async (h: Harness) => {
+        const base = {
+          lineageId: "lineage-resume",
+          entityId: "resume-1",
+          kind: "resume",
+          expectedParentIds: [],
+          sourceVersionIds: [],
+          branchRequested: false,
+        };
+        await h.invoke("job-stack.version.save.v1", {
+          ...base,
+          requestKey: "first",
+          content: { text: "1" },
+        });
+        return h.invoke("job-stack.version.save.v1", {
+          ...base,
+          requestKey: "invalid",
+          content: { text: "2" },
+        });
+      },
+      code: "recovery-head-conflict",
+    },
+    {
+      name: "schema-invalid input",
+      run: async (h: Harness) =>
+        h.invoke("job-stack.claim.add.v1", {
+          requestKey: "invalid",
+          body: { field: "", text: "y", sourceIds: [], permitted: false },
+        }),
+      code: "invalid-shared-value",
+    },
+  ])(
+    "a validation failure ($name) creates no transaction and no outbox job",
+    async ({ run, code }) => {
+      const h = await commandHarness();
+      const transactions = h.sqlite.count("recovery_transactions"),
+        outbox = h.sqlite.count("recovery_outbox"),
+        batches = h.sqlite.batches.length;
+      await expect(run(h)).rejects.toThrow(code);
+      const setupCommits = h.sqlite.batches
+        .slice(batches)
+        .filter((b) => b.some((sql) => sql.startsWith("INSERT INTO recovery_transactions"))).length;
+      expect(h.sqlite.count("recovery_transactions")).toBe(
+        transactions + setupCommits,
+      );
+      expect(h.sqlite.count("recovery_outbox")).toBe(outbox + setupCommits);
+      expect(
+        h.rows(
+          "SELECT count(*) AS n FROM recovery_request_results WHERE request_key='invalid'",
+        ),
+      ).toEqual([{ n: 0 }]);
+      expect(
+        h.rows(
+          "SELECT count(*) AS n FROM command_requests WHERE request_key='invalid' AND state='committed'",
+        ),
+      ).toEqual([{ n: 0 }]);
     },
   );
 });

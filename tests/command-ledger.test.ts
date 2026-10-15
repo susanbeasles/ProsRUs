@@ -144,6 +144,44 @@ describe("D1 request ledger", () => {
     expect(await l.find("key-1")).toMatchObject({ result: { ok: true } });
   });
 
+  it("commits a local-write only by naming its exact committed recovery result", async () => {
+    const { ledger: l, sqlite } = ledger();
+    await l.begin(begin);
+    const release = {
+      requestKey: "key-1",
+      inputDigest: digest,
+      now: 8,
+      audit: audit("event-1"),
+    };
+    await expect(
+      l.commit({ ...release, recoveryTransactionId: "transaction-1" }),
+    ).rejects.toThrow("COMMAND_RECOVERY_RESULT_MISSING");
+    await expect(
+      l.commit({ ...release, result: {}, recoveryTransactionId: "t" } as never),
+    ).rejects.toThrow("COMMAND_RELEASE_INVALID");
+    expect(sqlite.count("command_audit")).toBe(0);
+    sqlite.raw.exec(`
+      INSERT INTO recovery_workspaces VALUES('owner','workspace');
+      INSERT INTO recovery_chains VALUES('owner','workspace','epoch','0',NULL);
+      INSERT INTO recovery_transactions VALUES('owner','workspace','transaction-1','epoch','1','0',NULL,'${"c".repeat(64)}',1,'key-1','${"d".repeat(64)}','{"versions":[],"expectedHeads":[]}');
+      INSERT INTO recovery_request_results VALUES('owner','workspace','key-1',1,'${"d".repeat(64)}','transaction-1','{}');`);
+    await expect(
+      l.commit({ ...release, recoveryTransactionId: "transaction-2" }),
+    ).rejects.toThrow("COMMAND_RECOVERY_RESULT_MISSING");
+    await l.commit({ ...release, recoveryTransactionId: "transaction-1" });
+    expect(await l.find("key-1")).toMatchObject({
+      state: "committed",
+      result: null,
+      recoveryTransactionId: "transaction-1",
+    });
+    expect(sqlite.count("command_audit")).toBe(1);
+    expect(() =>
+      sqlite.raw.exec(
+        "UPDATE command_requests SET recovery_transaction_id='transaction-2'",
+      ),
+    ).toThrow(/COMMAND_REQUEST_COMMITTED/);
+  });
+
   it("stores only bounded identifiers and fixed reason codes in the audit", async () => {
     const { ledger: l, sqlite } = ledger();
     await l.audit({ ...audit("event-1"), decision: "deny", reason: "operation-denied" });
