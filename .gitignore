@@ -14,3 +14,15 @@
 
 
 .claude/settings.local.json
+
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.env*
+!.env.example
+*.tfstate*
+.terraform/
+*.tfplan
+coverage/
+artifacts/
