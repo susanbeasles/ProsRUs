@@ -1,0 +1,44 @@
+# Quality gate, then the universal release from workflow_depot (CONTRACTS §9).
+# Release produces bundles, the release manifest, the authorization policy and
+# checksums; deployment is kicked off inside Cloudflare by the central deployer.
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+
+permissions: {}
+
+concurrency:
+  group: prosrus-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run verify
+      - run: node scripts/scan-secrets.mjs
+
+  release:
+    needs: [verify]
+    permissions:
+      contents: write       # publish job: GitHub Release
+      id-token: write       # attest job: keyless signing
+      attestations: write   # attest job: build provenance
+    uses: susanbeasles/workflow_depot/.github/workflows/release.yml@5c91f0b106262b1577f952947df3c029e6946a57
+    with:
+      depot_ref: 5c91f0b106262b1577f952947df3c029e6946a57
+      application_manifest: deployment/application.json
