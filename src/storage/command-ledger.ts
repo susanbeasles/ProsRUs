@@ -13,9 +13,20 @@ const rowSchema = z.object({
   state: z.enum(["pending", "committed"]),
   root_revision: z.number().int().nonnegative(),
   result: z.string().nullable(),
+  recovery_transaction_id: id.nullable(),
 });
+/** `result` holds only intake outputs; a committed local-write names its
+ * recovery transaction and its result lives in recovery_request_results. */
 export type LedgerRow = LedgerEntry &
-  Readonly<{ rootRevision: number; result: unknown }>;
+  Readonly<{
+    rootRevision: number;
+    result: unknown;
+    recoveryTransactionId: string | null;
+  }>;
+/** Exactly one release record: an intake result or a recovery transaction. */
+export type LedgerRelease =
+  | Readonly<{ result: unknown; recoveryTransactionId?: undefined }>
+  | Readonly<{ recoveryTransactionId: string; result?: undefined }>;
 export type RetainedRoot = Readonly<{ root: unknown; revision: number }>;
 export const commandAuditDecisions = [
   "allow",
@@ -65,7 +76,7 @@ export function createCommandLedger(
     id.parse(requestKey);
     const raw = await db
       .prepare(
-        `SELECT operation_id,input_digest,state,root_revision,result FROM command_requests WHERE ${scope}`,
+        `SELECT operation_id,input_digest,state,root_revision,result,recovery_transaction_id FROM command_requests WHERE ${scope}`,
       )
       .bind(owner, workspaceId, requestKey)
       .first();
@@ -77,6 +88,7 @@ export function createCommandLedger(
       state: row.state,
       rootRevision: row.root_revision,
       result: row.result === null ? null : JSON.parse(row.result),
+      recoveryTransactionId: row.recovery_transaction_id,
     };
   }
   /** Insert a pending row unless one exists, then return the stored identity. */
@@ -168,13 +180,18 @@ export function createCommandLedger(
     return input.expectedRevision + 1;
   }
   /** With `released`, the row is written only if the ledger row holds exactly
-   * that committed result (checked inside the same batch). */
+   * that committed release record (checked inside the same batch). */
   function auditStatement(
     event: CommandAuditEvent,
-    released?: Readonly<{ requestKey: string; inputDigest: string; text: string }>,
+    released?: Readonly<{
+      requestKey: string;
+      inputDigest: string;
+      text: string | null;
+      transactionId: string | null;
+    }>,
   ) {
     const guard = released
-      ? ` WHERE EXISTS(SELECT 1 FROM command_requests WHERE ${scope} AND input_digest=? AND state='committed' AND result=?)`
+      ? ` WHERE EXISTS(SELECT 1 FROM command_requests WHERE ${scope} AND input_digest=? AND state='committed' AND result IS ? AND recovery_transaction_id IS ?)`
       : "";
     return db
       .prepare(
@@ -206,33 +223,41 @@ export function createCommandLedger(
               released.requestKey,
               released.inputDigest,
               released.text,
+              released.transactionId,
             ]
           : []),
       );
   }
-  /** Record the released result and its allow decision in one D1 batch.
-   * Pending -> committed only; a committed row is never rewound. */
+  /** Record the release and its allow decision in one D1 batch. A
+   * recovery-backed release is accepted by the sink only if the matching
+   * recovery_request_results row exists. Pending -> committed only. */
   async function commit(
     input: Readonly<{
       requestKey: string;
       inputDigest: string;
-      result: unknown;
       now: number;
       audit: CommandAuditEvent;
-    }>,
+    }> &
+      LedgerRelease,
   ): Promise<void> {
-    const text = encode(
-      input.result,
-      MAX_RESULT_BYTES,
-      "COMMAND_RESULT_TOO_LARGE",
+    const recovery = input.recoveryTransactionId ?? null;
+    demand(
+      (recovery === null) !== (input.result === undefined),
+      "COMMAND_RELEASE_INVALID",
     );
+    const text =
+      recovery === null
+        ? encode(input.result, MAX_RESULT_BYTES, "COMMAND_RESULT_TOO_LARGE")
+        : null;
+    if (recovery !== null) id.parse(recovery);
     const [outcome] = await db.batch([
       db
         .prepare(
-          `UPDATE command_requests SET state='committed',root=NULL,result=?,updated_at=max(updated_at,?) WHERE ${scope} AND input_digest=? AND state='pending'`,
+          `UPDATE command_requests SET state='committed',root=NULL,result=?,recovery_transaction_id=?,updated_at=max(updated_at,?) WHERE ${scope} AND input_digest=? AND state='pending'`,
         )
         .bind(
           text,
+          recovery,
           input.now,
           owner,
           workspaceId,
@@ -243,6 +268,7 @@ export function createCommandLedger(
         requestKey: input.requestKey,
         inputDigest: input.inputDigest,
         text,
+        transactionId: recovery,
       }),
     ]);
     if (outcome && changes(outcome) === 1) return;
@@ -250,7 +276,10 @@ export function createCommandLedger(
     demand(
       row?.state === "committed" &&
         row.inputDigest === input.inputDigest &&
-        JSON.stringify(row.result) === text,
+        row.recoveryTransactionId === recovery &&
+        (text === null
+          ? row.result === null
+          : JSON.stringify(row.result) === text),
       "COMMAND_LEDGER_CONFLICT",
       409,
     );
