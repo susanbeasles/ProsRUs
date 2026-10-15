@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../dashboard/app/App";
-import type { DomainWriteOutput, ReadClient, WriteInput, WriteOperation } from "../dashboard/lib/api";
+import { ApiError, type DomainWriteOutput, type ReadClient, type WriteInput, type WriteOperation } from "../dashboard/lib/api";
 import type { Services } from "../dashboard/lib/workspace";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,6 +72,9 @@ async function mount(search: string, fake: Fake = {}, write?: (operation: WriteO
       return fake.records?.[kind + ":" + id] ?? null;
     },
     requestResult: async () => ({ result: null }),
+    recoveryStatus: async () => {
+      throw new ApiError("Workspace read denied or unavailable. Refresh your selection.", 501, "operation-unavailable");
+    },
   };
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -102,11 +105,14 @@ const text = () => document.body.textContent ?? "";
 const notEnabled = (title: string) => document.querySelector(`[role="note"][aria-label="${title} (not enabled)"]`);
 
 describe("feature pages", () => {
-  it("overview shows first-page counts and recent records", async () => {
+  it("overview shows first-page counts, recent records and an explicit backup-status state", async () => {
     const opp = row("opportunity", "opp_1", { role: "Engineer", company: "Co" });
-    await mount("?grant=g&page=overview", { pages: { opportunity: [summary(opp)] } });
+    await mount("?grant=g&page=overview", { pages: { opportunity: [summary(opp)] }, scopes: [...ALL_SCOPES, "job-stack.protection.read"] });
     await waitFor(() => text().includes("Recently updated records") && text().includes("opp_1"));
     expect(text()).toContain("Opportunity records");
+    await waitFor(() => text().includes("Backup status unavailable."));
+    expect(document.querySelector(".recovery-badge")).toBeNull();
+    expect(text()).not.toContain("Protected");
   });
 
   it("shows a skeleton while loading, then the empty state", async () => {
@@ -156,6 +162,7 @@ describe("feature pages", () => {
     for (const unmount of unmounts.splice(0)) unmount();
     await mount("?grant=g&page=history&view=claim");
     await waitFor(() => text().includes("No claim records"));
+    await waitFor(() => text().includes("does not include job-stack.protection.read"));
   });
 
   it("explains a missing grant scope instead of rendering a failing button", async () => {

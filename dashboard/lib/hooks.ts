@@ -105,3 +105,27 @@ export function usePeek<T>(key: readonly (string | number | boolean | null)[] | 
   const read = useCallback(() => (key ? workspace.cache.peek<T>(key) : undefined), [workspace, hash]);
   return useSyncExternalStore(subscribe, read, read);
 }
+
+/**
+ * Refetches at most once per interval, only while the document is visible; returning to a visible
+ * tab refetches when the data is older than the interval. Hidden tabs never poll.
+ */
+export function useVisiblePolling(refetch: () => void, updatedAt: number, intervalMs: number, enabled: boolean) {
+  const workspace = useWorkspace();
+  const latest = useRef({ refetch, updatedAt });
+  latest.current = { refetch, updatedAt };
+  useEffect(() => {
+    if (!enabled) return;
+    const due = () =>
+      document.visibilityState === "visible" && workspace.services.now() - latest.current.updatedAt >= intervalMs;
+    const poll = () => {
+      if (due()) latest.current.refetch();
+    };
+    const timer = setInterval(poll, intervalMs);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
+  }, [workspace, intervalMs, enabled]);
+}

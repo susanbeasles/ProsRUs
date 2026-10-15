@@ -10,6 +10,7 @@ import type {
   VersionSummary,
 } from "./api";
 import type { QueryKey } from "./queryCache";
+import { parseRecoveryStatus, RECOVERY_POLL_MS, type RecoveryStatus } from "./recoveryStatus";
 
 /** A read bound to the selected grant by the workspace; its key must capture every input of run(). */
 export type ReadQuery<T> = {
@@ -28,6 +29,7 @@ export const keys = {
   version: (versionId: string, lineageId: string, entityId: string) => ["version", versionId, lineageId, entityId] as const,
   protection: (versionId: string) => ["protection", versionId] as const,
   requestResult: (requestKey: string) => ["request", requestKey] as const,
+  recoveryStatus: (workspaceId: string) => ["recovery-status", workspaceId] as const,
 };
 
 /** Matches every cached list page and detail of one record kind. */
@@ -103,6 +105,11 @@ export const reads = {
   protection: (versionId: string): ReadQuery<ReadProtection> => ({
     key: keys.protection(versionId),
     run: (client) => client.protection(versionId),
+  }),
+  recoveryStatus: (workspaceId: string): ReadQuery<RecoveryStatus> => ({
+    key: keys.recoveryStatus(workspaceId),
+    run: async (client) => parseRecoveryStatus(await client.recoveryStatus(workspaceId), workspaceId),
+    staleMs: RECOVERY_POLL_MS,
   }),
   requestResult: (requestKey: string): ReadQuery<RequestResult> => ({
     key: keys.requestResult(requestKey),

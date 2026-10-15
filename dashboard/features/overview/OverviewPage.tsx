@@ -1,5 +1,6 @@
 import { CardsSkeleton, EmptyState, errorMessage } from "../../components/Feedback";
 import { PageHeader } from "../../components/Layout";
+import { LazyRecoveryStatus } from "../../components/LazyRecoveryStatus";
 import { RouteLink, useRoute } from "../../app/context";
 import { pageRoute, type PageId } from "../../app/router";
 import { label, objectFields, type ReadRecord, type ReadSummary, type RecordPage } from "../../lib/api";
@@ -75,6 +76,7 @@ export default function OverviewPage() {
           ) : null;
         })}
       </div>
+      <LazyRecoveryStatus />
       <div className="overviewgrid">
         <section className="panel" aria-labelledby="recent-activity">
           <h2 id="recent-activity">Recently updated records</h2>

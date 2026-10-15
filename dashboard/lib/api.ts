@@ -113,10 +113,16 @@ export async function request(
   if (body !== undefined || !selection?.grantId || !READ_PATH.test(path))
     throw Error("Read-only workspace selection required");
   selection.signal?.throwIfAborted();
-  const target = new URL("/owner/job-stack" + path, "https://local.invalid");
-  const operation = operationByName(target.pathname.split("/").at(-1) ?? "");
+  const operation = operationByName(path.split("?")[0]?.split("/").at(-1) ?? "");
   if (!operation || operation.effect !== "read")
     throw Error("Read-only workspace selection required");
+  return ownerRead(path, operation.maxOutputBytes, selection);
+}
+
+/** The owner GET read flow: one-use nonce bound to grant and exact target, then a bounded read. */
+async function ownerRead(path: string, maxOutputBytes: number, selection: { grantId: string; signal?: AbortSignal }) {
+  selection.signal?.throwIfAborted();
+  const target = new URL("/owner/job-stack" + path, "https://local.invalid");
   target.searchParams.sort();
   const relative = target.pathname + target.search;
   const nonceQuery = new URLSearchParams({
@@ -150,9 +156,31 @@ export async function request(
       response.status,
       await errorCode(response, selection.signal),
     );
-  const result = await responseJson(response, operation.maxOutputBytes, selection.signal);
+  const result = await responseJson(response, maxOutputBytes, selection.signal);
   selection.signal?.throwIfAborted();
   return result;
+}
+
+/**
+ * `job_stack_recovery_status` (delivery contracts section 10) is added to the shared catalog by
+ * another workstream. Until then this one named read uses the same owner GET flow with a local
+ * output bound; request() itself stays catalog-only. The caller validates recovery-status-v1.
+ */
+export const RECOVERY_STATUS_READ = Object.freeze({
+  name: "job_stack_recovery_status",
+  scope: "job-stack.protection.read",
+  maxOutputBytes: 16384,
+});
+
+export async function readRecoveryStatus(workspaceId: string, selection: { grantId: string; signal?: AbortSignal }) {
+  if (!selection.grantId) throw Error("Read-only workspace selection required");
+  const catalog = operationByName(RECOVERY_STATUS_READ.name);
+  if (catalog && catalog.effect !== "read") throw Error("Read-only workspace selection required");
+  return ownerRead(
+    "/api/operations/" + RECOVERY_STATUS_READ.name + "?" + new URLSearchParams({ workspaceId }),
+    catalog?.maxOutputBytes ?? RECOVERY_STATUS_READ.maxOutputBytes,
+    selection,
+  );
 }
 
 /** The catalog's local-write domain operations the owner dashboard may invoke through mutate(). */
@@ -478,6 +506,10 @@ export function createReadClient(grantId: string, signal?: AbortSignal) {
           selection,
         ),
       );
+    },
+    /** Raw bounded recovery-status JSON; lib/recoveryStatus validates recovery-status-v1. */
+    async recoveryStatus(workspaceId: string): Promise<unknown> {
+      return readRecoveryStatus(workspaceId, selection);
     },
     async requestResult(requestKey: string): Promise<RequestResult> {
       return validateCoreOutput(

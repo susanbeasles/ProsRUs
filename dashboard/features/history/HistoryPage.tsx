@@ -3,6 +3,7 @@ import { BackLink, DetailHeading, PageHeader, ViewTabs } from "../../components/
 import { QueryView } from "../../components/QueryView";
 import { RecordIdentity } from "../../components/RecordBody";
 import { RecordList } from "../../components/RecordList";
+import { LazyRecoveryStatus } from "../../components/LazyRecoveryStatus";
 import { RouteLink, useRoute } from "../../app/context";
 import { HISTORY_KINDS } from "../../app/router";
 import { label, objectFields, type ReadProtection, type ReadRecord, type VersionManifest } from "../../lib/api";
@@ -22,6 +23,7 @@ export default function HistoryPage() {
           implies the others, and none implies current pursuit or action approval.
         </p>
       </PageHeader>
+      <LazyRecoveryStatus />
       <ViewTabs label="Record kinds" labels={Object.fromEntries(HISTORY_KINDS.map((k) => [k, label(k)]))} />
       <KindList kind={kind} />
     </>
