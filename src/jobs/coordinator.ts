@@ -15,6 +15,7 @@ import { executeCommand } from "../application/commands/execute";
 import { createSerialQueue } from "../application/commands/serial";
 import { createRecoveryIntakeBudget } from "../application/recovery-admission";
 import { createPrimaryArchive } from "../storage/primary-archive";
+import { restoredVersionResolver } from "../storage/restored-objects";
 function unavailable(): never {
   throw Error("operation-unavailable");
 }
@@ -40,7 +41,10 @@ export class Coordinator extends DurableObject<Environment> {
           request,
           {
             db: this.env.DB,
-            archive: createPrimaryArchive(this.env.ARTIFACTS),
+            archive: createPrimaryArchive(
+              this.env.ARTIFACTS,
+              restoredVersionResolver(this.env.DB),
+            ),
             authority: this.env.CONTROL_AUTHORITY,
             trustRoot: this.env.RECOVERY_TRUST_ROOT,
             budget: this.#intakeBudget,

@@ -15,7 +15,7 @@
     "check:tooling": "node --test scripts/test-tooling-policy.mjs",
     "check:configuration": "node --test scripts/test-configure.mjs",
     "check:deployment": "node --test scripts/test-deployment-manifest.mjs",
-    "verify": "npm run check:tooling && npm run check:configuration && npm run check:deployment && npm run typecheck && npm run lint && npm run check:recovery-schemas && npm run check:core-planner && npm test && npm run test:runtime && npm run test:shared-read && npm run test:audited-import && npm run test:recovery && npm run test:primary && npm run test:domain && npm run test:core && npm run test:commands && npm run build && npm run typecheck:operator && npm run test:operator && npm run test:pipeline",
+    "verify": "npm run check:tooling && npm run check:configuration && npm run check:deployment && npm run typecheck && npm run lint && npm run check:recovery-schemas && npm run check:core-planner && npm test && npm run test:runtime && npm run test:shared-read && npm run test:audited-import && npm run test:recovery && npm run test:primary && npm run test:domain && npm run test:core && npm run test:replicator && npm run test:commands && npm run build && npm run typecheck:operator && npm run test:operator && npm run test:pipeline",
     "db:local": "wrangler d1 migrations apply DB --local --config wrangler.local.jsonc",
     "test:runtime": "node scripts/test-runtime.mjs",
     "test:shared-read": "node scripts/test-shared-read-runtime.mjs",
@@ -32,7 +32,8 @@
     "test:audited-import": "node scripts/test-audited-import.mjs",
     "test:operator": "node --test scripts/test-operator-broker.mjs && node --test scripts/test-operator-kernel-runtime.mjs && node --test scripts/test-operator-utf8-transport.mjs",
     "typecheck:operator": "tsc -p tsconfig.operator.json && tsc -p tsconfig.operator-worker.json",
-    "test:pipeline": "node scripts/test-pipeline-contract.mjs && node scripts/test-pipeline-runtime.mjs"
+    "test:pipeline": "node scripts/test-pipeline-contract.mjs && node scripts/test-pipeline-runtime.mjs",
+    "test:replicator": "node scripts/test-replicator-runtime.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

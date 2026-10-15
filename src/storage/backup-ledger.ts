@@ -329,7 +329,8 @@ export function createBackupLedger(db: D1Database, owner: string) {
           bound.epochId,
         ),
         query(
-          "SELECT min(created_at) AS oldest FROM recovery_outbox WHERE owner=? AND workspace_id=? AND state IN ('pending','running','retryable')",
+          // Lag runs from the trusted D1 commit observation, not caller-supplied time.
+          "SELECT min(coalesce(o.observed_at_ms,x.created_at)) AS oldest FROM recovery_outbox AS x LEFT JOIN recovery_commit_observations AS o ON o.owner=x.owner AND o.workspace_id=x.workspace_id AND o.transaction_id=x.transaction_id WHERE x.owner=? AND x.workspace_id=? AND x.state IN ('pending','running','retryable')",
           owner,
           workspaceId,
         ),

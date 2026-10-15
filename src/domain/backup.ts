@@ -123,7 +123,6 @@ export const changeRecordSchema = z
     previousDigest: sha256Schema.nullable(),
     schemaFingerprint: sha256Schema,
     committedAt: timestamp.nullable(),
-    capturedAt: timestamp,
     envelope: recoveryJsonSchema,
     objects: z.array(backupObjectSchema).max(512).readonly(),
   })
@@ -341,6 +340,6 @@ export function retainedCheckpoint(kind: CheckpointKind, createdAt: number, now:
   const window = kind === "daily" ? RETENTION.dailyCheckpointMs : RETENTION.monthlyCheckpointMs;
   return now - createdAt <= window;
 }
-export function retainedChange(capturedAt: number, now: number): boolean {
-  return now - capturedAt <= RETENTION.changesMs;
+export function retainedChange(uploadedAt: number, now: number): boolean {
+  return now - uploadedAt <= RETENTION.changesMs;
 }

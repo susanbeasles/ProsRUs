@@ -57,18 +57,36 @@ async function verifyBytes(
   );
 }
 
+/** Maps a pinned upload version to the version an operator restore created for
+ * the same key (ADR 0004). Returns null when the identity was never restored. */
+export type RestoredVersionResolver = (
+  storageKey: string,
+  versionId: string,
+) => Promise<string | null>;
+
 /** A private binding adapter. Callers supply trusted namespace/resource authorization;
  * this does not grant owner access. No delete, overwrite, generic fetch or signing port. */
-export function createPrimaryArchive(bucket: R2Bucket): PrimaryArchive {
+export function createPrimaryArchive(
+  bucket: R2Bucket,
+  restored: RestoredVersionResolver | null = null,
+): PrimaryArchive {
   async function getStream(
     object: ArchiveObjectRef,
   ): Promise<ArchiveStreamReadResult | null> {
     const key = storageKey(object);
     const read = await bucket.get(key);
     if (read === null) return null;
+    // A restored object keeps its pinned logical identity only through an
+    // immutable restore alias; callers still verify its content digest.
+    const aliased =
+      read.key === key &&
+      object.versionId !== null &&
+      object.versionId !== read.version &&
+      restored !== null &&
+      (await restored(key, object.versionId)) === read.version;
     if (
       read.key !== key ||
-      (object.versionId !== null && object.versionId !== read.version)
+      (object.versionId !== null && object.versionId !== read.version && !aliased)
     ) {
       await read.body.cancel().catch(() => undefined);
       throw new DomainError("ARCHIVE_IDENTITY_MISMATCH");
@@ -84,7 +102,7 @@ export function createPrimaryArchive(bucket: R2Bucket): PrimaryArchive {
     return {
       object: archiveObjectRefSchema.parse({
         ...object,
-        versionId: read.version,
+        versionId: aliased ? object.versionId : read.version,
       }),
       sizeBytes: read.size,
       mediaType: read.httpMetadata?.contentType ?? "application/octet-stream",
