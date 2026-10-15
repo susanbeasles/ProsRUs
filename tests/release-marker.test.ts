@@ -62,7 +62,7 @@ describe("http-release-marker/v1", () => {
     expect(releaseMarker(binding({ startedAt: started })).startedAt).toBe(started);
     const response = releaseMarkerResponse(binding());
     expect(response.status).toBe(200);
-    expect((await response.json()).releaseTag).toBe("v1.2.3");
+    expect(await response.json()).toMatchObject({ releaseTag: "v1.2.3" });
   });
 
   it("answers 503 release-marker-invalid for any malformed binding, never a guess", async () => {
