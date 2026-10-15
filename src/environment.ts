@@ -9,6 +9,9 @@ export type Environment = {
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_PUBSUB_SERVICE_ACCOUNT?: string;
   CREDENTIAL_KEY?: string;
-  CONTROL_AUTHORITY: import("./application/shared-read-authority").ReadAuthority;
+  /** Public `recovery-trust-root-v1` JSON for Control's signing key; absent
+   * means versioned saves fail closed with signing unavailable. */
+  RECOVERY_TRUST_ROOT?: string;
+  CONTROL_AUTHORITY: import("./application/shared-read-authority").ControlAuthority;
   COORDINATOR: DurableObjectNamespace<Coordinator>;
 };
