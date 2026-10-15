@@ -14,9 +14,11 @@ const read = (path) => {
 };
 const ADAPTERS = new Set(["cloudflare-d1-migrate/v1", "cloudflare-worker/v1"]);
 const keys = (value) => Object.keys(value).sort();
+/** Line comments only, outside strings: enough for the repository's own configs. */
+const parseJsonc = (text) => JSON.parse(text.split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n"));
 
 /** application-deployment/v1 validation (CONTRACTS §1). Returns a list of issues. */
-export function manifestIssues(manifest, { exists = () => true, scripts = {}, wrangler = {} } = {}) {
+export function manifestIssues(manifest, { exists = () => true, scripts = {}, wrangler = {}, wranglerFor = () => wrangler } = {}) {
   const issues = [];
   const exact = (value, expected, label) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return issues.push(`${label} must be an object`);
@@ -54,14 +56,21 @@ export function manifestIssues(manifest, { exists = () => true, scripts = {}, wr
     }
     if (target?.adapter === "cloudflare-worker/v1") {
       exact(target, ["id", "adapter", "build", "dependsOn", "healthContract"], label);
-      exact(target.build, ["wranglerConfig", "entry", "assetsDir", "buildCommand"], `${label} build`);
-      if (target.healthContract !== "http-release-marker/v1") issues.push(`${label} healthContract must be http-release-marker/v1`);
-      for (const key of ["wranglerConfig", "entry", "assetsDir"]) relative(target.build?.[key], `${label} ${key}`);
-      for (const key of ["wranglerConfig", "entry"]) if (!exists(target.build?.[key])) issues.push(`${label} ${key} missing`);
-      if (typeof target.build?.buildCommand !== "string" || !/^[a-z][a-z0-9:-]{0,63}$/.test(target.build.buildCommand) || !Object.hasOwn(scripts, target.build.buildCommand))
+      const build = target.build ?? {};
+      const buildKeys = ["wranglerConfig", "entry", ...["assetsDir", "buildCommand"].filter((key) => Object.hasOwn(build, key))];
+      exact(build, buildKeys, `${label} build`);
+      for (const key of buildKeys.filter((key) => key !== "buildCommand")) relative(build[key], `${label} ${key}`);
+      for (const key of ["wranglerConfig", "entry"]) if (!exists(build[key])) issues.push(`${label} ${key} missing`);
+      if (Object.hasOwn(build, "buildCommand") && (typeof build.buildCommand !== "string" || !/^[a-z][a-z0-9:-]{0,63}$/.test(build.buildCommand) || !Object.hasOwn(scripts, build.buildCommand)))
         issues.push(`${label} buildCommand must name an npm script`);
-      if (wrangler.main !== target.build?.entry) issues.push(`${label} entry must equal wrangler main`);
-      if (normalize(wrangler.assets?.directory ?? "") !== target.build?.assetsDir) issues.push(`${label} assetsDir must equal wrangler assets.directory`);
+      const config = wranglerFor(build.wranglerConfig) ?? {};
+      if (config.main !== build.entry) issues.push(`${label} entry must equal its wrangler main`);
+      if (normalize(config.assets?.directory ?? ".") !== (build.assetsDir ?? ".")) issues.push(`${label} assetsDir must equal its wrangler assets.directory`);
+      // A routed Worker proves its release over HTTP; a routeless one (no route,
+      // no workers.dev, no assets) is proven by its active deployed version.
+      const routeless = config.workers_dev === false && !config.route && !config.routes && !config.assets;
+      if (!(target.healthContract === "http-release-marker/v1" && !routeless) && !(target.healthContract === "worker-version/v1" && routeless))
+        issues.push(`${label} healthContract must be http-release-marker/v1 (routed) or worker-version/v1 (routeless)`);
     }
   }
   for (const target of targets) for (const dep of target?.dependsOn ?? []) if (!ids.has(dep)) issues.push(`target ${target.id} depends on unknown ${dep}`);
@@ -88,6 +97,7 @@ function context() {
     exists: (path) => typeof path === "string" && existsSync(join(root, path)),
     scripts: JSON.parse(read("package.json")).scripts,
     wrangler: JSON.parse(read("wrangler.jsonc")),
+    wranglerFor: (path) => (typeof path === "string" && existsSync(join(root, path)) ? parseJsonc(read(path)) : null),
   };
 }
 const manifest = () => JSON.parse(read("deployment/application.json"));
@@ -109,6 +119,10 @@ test("rejects drift: unknown keys, adapters, cycles, escapes and missing paths",
     (m) => { m.targets[1].build.buildCommand = "vite build && rm -rf /"; },
     (m) => { m.targets[1].build.buildCommand = "not-a-script"; },
     (m) => { m.targets[1].healthContract = "http-ok/v1"; },
+    (m) => { m.targets[1].healthContract = "worker-version/v1"; },
+    (m) => { m.targets[2].healthContract = "http-release-marker/v1"; },
+    (m) => { m.targets[2].build.entry = "src/worker.ts"; },
+    (m) => { m.targets[2].dependsOn = []; m.targets[0].dependsOn = ["prosrus-replicator"]; m.targets[2].dependsOn = ["prosrus-d1-migrations"]; },
     (m) => { m.environments.production.requiredApprovals = 0; },
     (m) => { m.repositoryId = 1; },
   ];

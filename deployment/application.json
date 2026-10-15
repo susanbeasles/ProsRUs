@@ -7,7 +7,10 @@
     {
       "id": "prosrus-d1-migrations",
       "adapter": "cloudflare-d1-migrate/v1",
-      "build": { "migrationsDir": "migrations", "binding": "DB" },
+      "build": {
+        "migrationsDir": "migrations",
+        "binding": "DB"
+      },
       "dependsOn": [],
       "recoveryPolicy": "forward-only"
     },
@@ -20,12 +23,36 @@
         "assetsDir": "dist",
         "buildCommand": "build"
       },
-      "dependsOn": ["prosrus-d1-migrations"],
+      "dependsOn": [
+        "prosrus-d1-migrations"
+      ],
       "healthContract": "http-release-marker/v1"
+    },
+    {
+      "id": "prosrus-replicator",
+      "adapter": "cloudflare-worker/v1",
+      "build": {
+        "wranglerConfig": "wrangler.replicator.jsonc",
+        "entry": "src/replicator/worker.ts"
+      },
+      "dependsOn": [
+        "prosrus-d1-migrations"
+      ],
+      "healthContract": "worker-version/v1"
     }
   ],
   "environments": {
-    "staging": { "allowedRefs": ["refs/heads/main"], "requiredApprovals": 0 },
-    "production": { "allowedRefs": ["refs/tags/v*"], "requiredApprovals": 1 }
+    "staging": {
+      "allowedRefs": [
+        "refs/heads/main"
+      ],
+      "requiredApprovals": 0
+    },
+    "production": {
+      "allowedRefs": [
+        "refs/tags/v*"
+      ],
+      "requiredApprovals": 1
+    }
   }
 }
